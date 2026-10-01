@@ -23,6 +23,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 
 data class Track(val title: String, val url: String)
@@ -38,6 +39,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private var player by mutableStateOf<ExoPlayer?>(null)
+    private var mediaSession: MediaSession? = null
     private var currentIndex by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,6 +73,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         val exo = ExoPlayer.Builder(this).build()
+        mediaSession = MediaSession.Builder(this, exo).build()
         val items = tracks.map { track ->
             MediaItem.Builder()
                 .setUri(track.url)
@@ -91,6 +94,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        mediaSession?.release()
+        mediaSession = null
         player?.release()
         player = null
     }
