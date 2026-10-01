@@ -1,8 +1,12 @@
 package com.lyse.mediaplayer
 
+import android.Manifest
+import android.content.ComponentName
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
@@ -19,12 +23,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
+import com.google.common.util.concurrent.ListenableFuture
 
 data class Track(val title: String, val url: String)
 
@@ -38,12 +44,18 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private var player by mutableStateOf<ExoPlayer?>(null)
-    private var mediaSession: MediaSession? = null
+    private var player by mutableStateOf<Player?>(null)
     private var currentIndex by mutableIntStateOf(0)
+    private var controllerFuture: ListenableFuture<MediaController>? = null
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             Column {
                 AndroidView(
@@ -72,31 +84,36 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        val exo = ExoPlayer.Builder(this).build()
-        mediaSession = MediaSession.Builder(this, exo).build()
-        val items = tracks.map { track ->
-            MediaItem.Builder()
-                .setUri(track.url)
-                .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).build())
-                .build()
-        }
-        exo.setMediaItems(items)
-        exo.addListener(object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                currentIndex = exo.currentMediaItemIndex
+        val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+        val future = MediaController.Builder(this, token).buildAsync()
+        controllerFuture = future
+        future.addListener({
+            val controller = future.get()
+            if (controller.mediaItemCount == 0) {
+                val items = tracks.map { track ->
+                    MediaItem.Builder()
+                        .setUri(track.url)
+                        .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).build())
+                        .build()
+                }
+                controller.setMediaItems(items)
+                controller.prepare()
+                controller.play()
             }
-        })
-        exo.prepare()
-        exo.play()
-        currentIndex = 0
-        player = exo
+            currentIndex = controller.currentMediaItemIndex
+            controller.addListener(object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    currentIndex = controller.currentMediaItemIndex
+                }
+            })
+            player = controller
+        }, ContextCompat.getMainExecutor(this))
     }
 
     override fun onStop() {
         super.onStop()
-        mediaSession?.release()
-        mediaSession = null
-        player?.release()
         player = null
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        controllerFuture = null
     }
 }
