@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Tab
@@ -61,7 +62,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             var tab by remember { mutableIntStateOf(0) }
-            Column {
+            Column(Modifier.systemBarsPadding()) {
                 TabRow(selectedTabIndex = tab) {
                     Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Lecteur") })
                     Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Éditeur") })

@@ -62,7 +62,6 @@ fun EditorScreen() {
             .also { exo ->
                 exo.addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
-                        // Keep the ORIGINAL duration, captured once per picked video
                         if (state == Player.STATE_READY &&
                             durationMs == 0L &&
                             exo.duration != C.TIME_UNSET
