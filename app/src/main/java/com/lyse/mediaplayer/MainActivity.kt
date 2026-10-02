@@ -14,10 +14,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -57,26 +60,35 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         setContent {
+            var tab by remember { mutableIntStateOf(0) }
             Column {
-                AndroidView(
-                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                    factory = { context -> PlayerView(context) },
-                    update = { view -> view.player = player }
-                )
-                LazyColumn {
-                    itemsIndexed(tracks) { index, track ->
-                        Text(
-                            text = track.title,
-                            fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    player?.seekToDefaultPosition(index)
-                                    player?.play()
-                                }
-                                .padding(16.dp)
-                        )
+                TabRow(selectedTabIndex = tab) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Lecteur") })
+                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Éditeur") })
+                }
+                if (tab == 0) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                        factory = { context -> PlayerView(context) },
+                        update = { view -> view.player = player }
+                    )
+                    LazyColumn {
+                        itemsIndexed(tracks) { index, track ->
+                            Text(
+                                text = track.title,
+                                fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        player?.seekToDefaultPosition(index)
+                                        player?.play()
+                                    }
+                                    .padding(16.dp)
+                            )
+                        }
                     }
+                } else {
+                    EditorScreen()
                 }
             }
         }
