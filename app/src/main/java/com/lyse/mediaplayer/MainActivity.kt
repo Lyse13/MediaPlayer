@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
                 TabRow(selectedTabIndex = tab) {
                     Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Lecteur") })
                     Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Éditeur") })
+                    Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Caméra") })
                 }
                 if (tab == 0) {
                     AndroidView(
@@ -88,8 +89,10 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     }
-                } else {
+                } else if (tab == 1) {
                     EditorScreen()
+                } else {
+                    CameraScreen()
                 }
             }
         }
