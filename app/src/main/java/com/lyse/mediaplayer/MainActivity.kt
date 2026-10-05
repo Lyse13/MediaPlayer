@@ -30,13 +30,21 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import com.google.common.util.concurrent.ListenableFuture
 
-data class Track(val title: String, val url: String)
+
+private const val DASH_URL =
+    "https://www.youtube.com/api/manifest/dash/id/bf5bb2419360daf1/source/youtube?as=fmp4_audio_clear,fmp4_sd_hd_clear&sparams=ip,ipbits,expire,source,id,as&ip=0.0.0.0&ipbits=0&expire=19000000000&signature=51AF5F39AB0CEC3E5497CD9C900EBFEAECCCB5C7.8506521BFC350652163895D4C26DEE124209AA9E&key=ik0"
+data class Track(
+    val title: String,
+    val url: String,
+    val mimeType: String? = null
+)
 
 class MainActivity : ComponentActivity() {
 
@@ -45,6 +53,7 @@ class MainActivity : ComponentActivity() {
             Track("Big Buck Bunny (video)", "https://storage.googleapis.com/exoplayer-test-media-0/BigBuckBunny_320x180.mp4"),
             Track("Jazz in Paris (audio)", "https://storage.googleapis.com/exoplayer-test-media-0/Jazz_In_Paris.mp3"),
             Track("Local sample (audio)", "android.resource://$packageName/${R.raw.sample_audio}"),
+            Track("Streaming adaptatif DASH (vidéo)", DASH_URL, MimeTypes.APPLICATION_MPD),
         )
     }
 
@@ -113,6 +122,7 @@ class MainActivity : ComponentActivity() {
                 val items = tracks.map { track ->
                     MediaItem.Builder()
                         .setUri(track.url)
+                        .setMimeType(track.mimeType)
                         .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).build())
                         .build()
                 }
