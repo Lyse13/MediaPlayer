@@ -31,11 +31,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +53,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.Executors
 
 @Composable
 fun CameraScreen() {
@@ -64,6 +67,8 @@ fun CameraScreen() {
     var hasAudio by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
     var useBackCamera by remember { mutableStateOf(true) }
     var status by remember { mutableStateOf<String?>(null) }
+    var analyzing by remember { mutableStateOf(false) }
+    var luma by remember { mutableDoubleStateOf(0.0) }
 
     var recording by remember { mutableStateOf<Recording?>(null) }
     var seconds by remember { mutableLongStateOf(0L) }
@@ -85,6 +90,32 @@ fun CameraScreen() {
     val controller = remember {
         LifecycleCameraController(context).apply {
             setEnabledUseCases(CameraController.IMAGE_CAPTURE or CameraController.VIDEO_CAPTURE)
+        }
+    }
+
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+    DisposableEffect(Unit) {
+        onDispose {
+            controller.clearImageAnalysisAnalyzer()
+            analysisExecutor.shutdown()
+        }
+    }
+
+    fun setAnalysis(enabled: Boolean) {
+        analyzing = enabled
+        if (enabled) {
+            controller.setEnabledUseCases(
+                CameraController.IMAGE_CAPTURE or CameraController.IMAGE_ANALYSIS
+            )
+            controller.setImageAnalysisAnalyzer(
+                analysisExecutor,
+                LuminosityAnalyzer { value -> luma = value }
+            )
+        } else {
+            controller.clearImageAnalysisAnalyzer()
+            controller.setEnabledUseCases(
+                CameraController.IMAGE_CAPTURE or CameraController.VIDEO_CAPTURE
+            )
         }
     }
 
@@ -118,15 +149,15 @@ fun CameraScreen() {
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx -> PreviewView(ctx).also { it.controller = controller } }
             )
-            val message = when {
-                isRecording -> "● REC  %02d:%02d".format(seconds / 60, seconds % 60)
-                status != null -> status
-                !hasAudio -> "Micro non autorisé : les vidéos seront sans son."
-                else -> null
+            val lines = buildList {
+                if (isRecording) add("● REC  %02d:%02d".format(seconds / 60, seconds % 60))
+                status?.let { add(it) }
+                if (analyzing) add("Luminosité moyenne : %.0f / 255".format(luma))
+                if (isEmpty() && !hasAudio) add("Micro non autorisé : les vidéos seront sans son.")
             }
-            message?.let {
+            if (lines.isNotEmpty()) {
                 Text(
-                    it,
+                    lines.joinToString("\n"),
                     color = Color.White,
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -135,6 +166,21 @@ fun CameraScreen() {
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
+        }
+
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Analyse de luminosité (désactive la vidéo)",
+                modifier = Modifier.weight(1f))
+            Switch(
+                checked = analyzing,
+                enabled = !isRecording,
+                onCheckedChange = { setAnalysis(it) }
+            )
         }
 
         Row(
@@ -158,7 +204,7 @@ fun CameraScreen() {
             ) {
                 Text("Photo")
             }
-            Button(onClick = {
+            Button(enabled = !analyzing, onClick = {
                 if (isRecording) {
                     recording?.stop()
                 } else {
