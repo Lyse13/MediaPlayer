@@ -68,31 +68,35 @@ class MainActivity : ComponentActivity() {
                     Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Éditeur") })
                     Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Caméra") })
                 }
-                if (tab == 0) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                        factory = { context -> PlayerView(context) },
-                        update = { view -> view.player = player }
-                    )
-                    LazyColumn {
-                        itemsIndexed(tracks) { index, track ->
-                            Text(
-                                text = track.title,
-                                fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        player?.seekToDefaultPosition(index)
-                                        player?.play()
-                                    }
-                                    .padding(16.dp)
-                            )
+                when (tab) {
+                    0 -> {
+                        AndroidView(
+                            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                            factory = { context -> PlayerView(context) },
+                            update = { view -> view.player = player }
+                        )
+                        LazyColumn {
+                            itemsIndexed(tracks) { index, track ->
+                                Text(
+                                    text = track.title,
+                                    fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            player?.seekToDefaultPosition(index)
+                                            player?.play()
+                                        }
+                                        .padding(16.dp)
+                                )
+                            }
                         }
                     }
-                } else if (tab == 1) {
-                    EditorScreen()
-                } else {
-                    CameraScreen()
+                    1 -> {
+                        EditorScreen()
+                    }
+                    else -> {
+                        CameraScreen()
+                    }
                 }
             }
         }
