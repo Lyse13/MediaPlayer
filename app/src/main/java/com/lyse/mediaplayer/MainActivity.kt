@@ -4,17 +4,26 @@ import android.Manifest
 import android.content.ComponentName
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -32,7 +41,11 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import com.google.common.util.concurrent.ListenableFuture
@@ -59,6 +72,15 @@ class MainActivity : ComponentActivity() {
 
     private var player by mutableStateOf<Player?>(null)
     private var currentIndex by mutableIntStateOf(0)
+    private var isFavorite by mutableStateOf(false)
+
+    @OptIn(UnstableApi::class)
+    private fun readFavorite(buttons: List<CommandButton>) {
+        isFavorite = buttons.any {
+            it.sessionCommand?.customAction == ACTION_TOGGLE_FAVORITE &&
+                    it.icon == CommandButton.ICON_HEART_FILLED
+        }
+    }
     private var controllerFuture: ListenableFuture<MediaController>? = null
 
     private val notificationPermission =
@@ -84,6 +106,23 @@ class MainActivity : ComponentActivity() {
                             factory = { context -> PlayerView(context) },
                             update = { view -> view.player = player }
                         )
+//                        PlaybackProgress(player)
+                        Button(
+                            onClick = {
+                                (player as? MediaController)?.sendCustomCommand(
+                                    SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY),
+                                    Bundle.EMPTY
+                                )
+                            },
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                contentDescription = null
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (isFavorite) "Retirer des favoris" else "Ajouter aux favoris")
+                        }
                         LazyColumn {
                             itemsIndexed(tracks) { index, track ->
                                 Text(
@@ -111,16 +150,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @OptIn(UnstableApi::class)
     override fun onStart() {
         super.onStart()
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
-        val future = MediaController.Builder(this, token).buildAsync()
+        val future = MediaController.Builder(this, token)
+            .setListener(object : MediaController.Listener {
+                override fun onMediaButtonPreferencesChanged(
+                    controller: MediaController,
+                    mediaButtonPreferences: List<CommandButton>,
+                ) {
+                    readFavorite(mediaButtonPreferences)
+                }
+                override fun onError(controller: MediaController, sessionError: SessionError) {
+                    Toast.makeText(this@MainActivity, sessionError.message, Toast.LENGTH_LONG).show()
+                }
+            })
+            .buildAsync()
         controllerFuture = future
         future.addListener({
             val controller = future.get()
             if (controller.mediaItemCount == 0) {
                 val items = tracks.map { track ->
                     MediaItem.Builder()
+                        .setMediaId(track.url)
                         .setUri(track.url)
                         .setMimeType(track.mimeType)
                         .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).build())
