@@ -54,6 +54,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.6.2")
     implementation("androidx.camera:camera-view:1.6.2")
     implementation("androidx.camera:camera-video:1.6.2")
+    implementation("androidx.media3:media3-exoplayer-dash:1.11.1")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
