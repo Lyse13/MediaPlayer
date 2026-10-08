@@ -2,6 +2,11 @@ package com.lyse.mediaplayer
 
 import android.os.Bundle
 import android.util.Log
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -11,6 +16,7 @@ import androidx.media3.exoplayer.analytics.PlaybackStatsListener
 import androidx.media3.exoplayer.util.EventLogger
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSession.ConnectionResult
@@ -22,6 +28,7 @@ import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import java.io.File
 
 private const val TAG = "PlayerEvents"
 
@@ -53,6 +60,7 @@ private fun createPlaybackListener() = object : Player.Listener {
 class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
+    private var mediaCache: SimpleCache? = null
     private val playbackListener = createPlaybackListener()
 
     private val favorites = mutableSetOf<String>()
@@ -134,28 +142,41 @@ class PlaybackService : MediaSessionService() {
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
-        val player = ExoPlayer.Builder(this).build().apply {
-            addListener(playbackListener)
-            addAnalyticsListener(EventLogger())
-            addAnalyticsListener(
-                PlaybackStatsListener(/* keepHistory= */ false) { eventTime, stats ->
-                    val title = eventTime.timeline
-                        .getWindow(eventTime.windowIndex, Timeline.Window())
-                        .mediaItem.mediaMetadata.title
-                    Log.d(
-                        TAG,
-                        "Playback summary for $title: play time = ${stats.totalPlayTimeMs} ms, " +
-                                "rebuffers = ${stats.totalRebufferCount}, " +
-                                "mean video bitrate = ${stats.meanVideoFormatBitrate}"
-                    )
-                }
+        val cache = SimpleCache(
+            File(cacheDir, "media3_playback_cache"),
+            LeastRecentlyUsedCacheEvictor(250L * 1024 * 1024),
+            StandaloneDatabaseProvider(this)
+        )
+        mediaCache = cache
+        val cacheDataSourceFactory = CacheDataSource.Factory()
+            .setCache(cache)
+            .setUpstreamDataSourceFactory(DefaultDataSource.Factory(this))
+        val player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(this).setDataSourceFactory(cacheDataSourceFactory)
             )
-            addListener(object : Player.Listener {
-                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                    updateButtons()
-                }
-            })
-        }
+            .build().apply {
+                addListener(playbackListener)
+                addAnalyticsListener(EventLogger())
+                addAnalyticsListener(
+                    PlaybackStatsListener(/* keepHistory= */ false) { eventTime, stats ->
+                        val title = eventTime.timeline
+                            .getWindow(eventTime.windowIndex, Timeline.Window())
+                            .mediaItem.mediaMetadata.title
+                        Log.d(
+                            TAG,
+                            "Playback summary for $title: play time = ${stats.totalPlayTimeMs} ms, " +
+                                    "rebuffers = ${stats.totalRebufferCount}, " +
+                                    "mean video bitrate = ${stats.meanVideoFormatBitrate}"
+                        )
+                    }
+                )
+                addListener(object : Player.Listener {
+                    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                        updateButtons()
+                    }
+                })
+            }
 
         mediaSession = MediaSession.Builder(this, player)
             .setCallback(SessionCallback())
@@ -173,6 +194,8 @@ class PlaybackService : MediaSessionService() {
             release()
             mediaSession = null
         }
+        mediaCache?.release()
+        mediaCache = null
         super.onDestroy()
     }
 }

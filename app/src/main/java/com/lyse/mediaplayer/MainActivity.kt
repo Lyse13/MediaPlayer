@@ -55,17 +55,26 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.inspector.MetadataRetriever
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
+import androidx.media3.exoplayer.source.TrackGroupArray
+import com.google.common.util.concurrent.FutureCallback
+import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import java.util.concurrent.TimeUnit
 
 
 private const val DASH_URL =
-    "https://www.youtube.com/api/manifest/dash/id/bf5bb2419360daf1/source/youtube?as=fmp4_audio_clear,fmp4_sd_hd_clear&sparams=ip,ipbits,expire,source,id,as&ip=0.0.0.0&ipbits=0&expire=19000000000&signature=51AF5F39AB0CEC3E5497CD9C900EBFEAECCCB5C7.8506521BFC350652163895D4C26DEE124209AA9E&key=ik0"
+    "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd"
+private const val HLS_VOD_URL =
+    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+private const val HLS_LIVE_URL =
+    "https://live-hls-apps-aje-fa.getaj.net/AJE/index.m3u8"
 data class Track(
     val title: String,
     val url: String,
@@ -93,6 +102,8 @@ class MainActivity : ComponentActivity() {
             Track("Jazz in Paris (audio)", "https://storage.googleapis.com/exoplayer-test-media-0/Jazz_In_Paris.mp3"),
             Track("Local sample (audio)", "android.resource://$packageName/${R.raw.sample_audio}"),
             Track("Streaming adaptatif DASH (vidéo)", DASH_URL, MimeTypes.APPLICATION_MPD),
+            Track("HLS adaptatif (vidéo à la demande)", HLS_VOD_URL, MimeTypes.APPLICATION_M3U8),
+            Track("HLS en direct (test)", HLS_LIVE_URL, MimeTypes.APPLICATION_M3U8),
         )
     }
 
@@ -116,6 +127,8 @@ class MainActivity : ComponentActivity() {
     private var audioTrackChoices by mutableStateOf<List<TrackChoice>>(emptyList())
     private var textTrackChoices by mutableStateOf<List<TrackChoice>>(emptyList())
     private var subtitlesDisabled by mutableStateOf(false)
+    private var metadataMessage by mutableStateOf<String?>(null)
+    private var metadataRequestId = 0
 
     private fun createMediaItem(track: Track): MediaItem =
         MediaItem.Builder()
@@ -124,6 +137,63 @@ class MainActivity : ComponentActivity() {
             .setMimeType(track.mimeType)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).build())
             .build()
+
+    @OptIn(UnstableApi::class)
+    private fun inspectMetadata(track: Track) {
+        val requestId = ++metadataRequestId
+        val retriever = try {
+            MetadataRetriever.Builder(this, createMediaItem(track)).build()
+        } catch (exception: Exception) {
+            metadataMessage = "Analyse impossible : ${exception.localizedMessage ?: "erreur inconnue"}"
+            return
+        }
+        metadataMessage = "Analyse de « ${track.title} » sans démarrer la lecture…"
+
+        val trackGroupsFuture = retriever.retrieveTrackGroups()
+        val durationFuture = retriever.retrieveDurationUs()
+        val metadataFuture = Futures.allAsList(trackGroupsFuture, durationFuture)
+        Futures.addCallback(
+            metadataFuture,
+            object : FutureCallback<List<Any>> {
+                override fun onSuccess(result: List<Any>?) {
+                    retriever.close()
+                    if (requestId != metadataRequestId || result == null) return
+                    val trackGroups = result[0] as TrackGroupArray
+                    val durationUs = result[1] as Long
+                    val trackCounts = (0 until trackGroups.length)
+                        .map { trackGroups.get(it).type }
+                        .groupingBy { it }
+                        .eachCount()
+                    val duration = if (durationUs == C.TIME_UNSET) {
+                        "durée inconnue"
+                    } else {
+                        formatMetadataDuration(TimeUnit.MICROSECONDS.toMillis(durationUs))
+                    }
+                    val trackSummary = listOf(
+                        C.TRACK_TYPE_AUDIO to "audio",
+                        C.TRACK_TYPE_VIDEO to "vidéo",
+                        C.TRACK_TYPE_TEXT to "sous-titres"
+                    ).mapNotNull { (type, label) ->
+                        trackCounts[type]?.let { "$it $label" }
+                    }.ifEmpty { listOf("aucune piste détectée") }
+                    metadataMessage = "${track.title} · $duration · ${trackSummary.joinToString()}"
+                }
+
+                override fun onFailure(error: Throwable) {
+                    retriever.close()
+                    if (requestId == metadataRequestId) {
+                        metadataMessage = "Analyse impossible : ${error.localizedMessage ?: "média inaccessible"}"
+                    }
+                }
+            },
+            ContextCompat.getMainExecutor(this)
+        )
+    }
+
+    private fun formatMetadataDuration(durationMs: Long): String {
+        val totalSeconds = durationMs / 1_000
+        return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+    }
 
     private fun updatePlaylistState(source: Player) {
         playlistItems = List(source.mediaItemCount) { index -> source.getMediaItemAt(index) }
@@ -297,6 +367,7 @@ class MainActivity : ComponentActivity() {
                                 Text("Réessayer")
                             }
                         }
+                        if (player != null) PlaybackProgress(player)
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -530,6 +601,14 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                                 )
                             }
+                            metadataMessage?.let { message ->
+                                item {
+                                    Text(
+                                        message,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                    )
+                                }
+                            }
                             items(tracks) { track ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -541,6 +620,9 @@ class MainActivity : ComponentActivity() {
                                         onClick = { player?.addMediaItem(createMediaItem(track)) }
                                     ) {
                                         Text("Ajouter")
+                                    }
+                                    TextButton(onClick = { inspectMetadata(track) }) {
+                                        Text("Infos")
                                     }
                                 }
                             }
