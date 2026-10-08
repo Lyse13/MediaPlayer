@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -47,6 +50,10 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.C
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaController
@@ -63,6 +70,19 @@ data class Track(
     val title: String,
     val url: String,
     val mimeType: String? = null
+)
+
+private enum class VideoQuality(val label: String) {
+    AUTO("Auto"),
+    SD("SD"),
+    HD("HD · 720p max")
+}
+
+private data class TrackChoice(
+    val label: String,
+    val mediaTrackGroup: TrackGroup,
+    val trackIndices: List<Int>,
+    val isSelected: Boolean
 )
 
 class MainActivity : ComponentActivity() {
@@ -88,8 +108,14 @@ class MainActivity : ComponentActivity() {
     private var canSkipNext by mutableStateOf(false)
     private var canSetRepeatMode by mutableStateOf(false)
     private var canSetShuffleMode by mutableStateOf(false)
+    private var canSetTrackSelectionParameters by mutableStateOf(false)
     private var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
     private var shuffleModeEnabled by mutableStateOf(false)
+    private var videoQuality by mutableStateOf(VideoQuality.AUTO)
+    private var hasVideoTracks by mutableStateOf(false)
+    private var audioTrackChoices by mutableStateOf<List<TrackChoice>>(emptyList())
+    private var textTrackChoices by mutableStateOf<List<TrackChoice>>(emptyList())
+    private var subtitlesDisabled by mutableStateOf(false)
 
     private fun createMediaItem(track: Track): MediaItem =
         MediaItem.Builder()
@@ -111,6 +137,61 @@ class MainActivity : ComponentActivity() {
             source.hasNextMediaItem()
         canSetRepeatMode = source.isCommandAvailable(Player.COMMAND_SET_REPEAT_MODE)
         canSetShuffleMode = source.isCommandAvailable(Player.COMMAND_SET_SHUFFLE_MODE)
+        canSetTrackSelectionParameters =
+            source.isCommandAvailable(Player.COMMAND_SET_TRACK_SELECTION_PARAMETERS)
+    }
+
+    private fun updateTrackChoices(tracks: Tracks) {
+        hasVideoTracks = tracks.containsType(C.TRACK_TYPE_VIDEO) &&
+            tracks.isTypeSupported(C.TRACK_TYPE_VIDEO)
+        audioTrackChoices = createTrackChoices(tracks, C.TRACK_TYPE_AUDIO)
+        textTrackChoices = createTrackChoices(tracks, C.TRACK_TYPE_TEXT)
+        if (textTrackChoices.any(TrackChoice::isSelected)) subtitlesDisabled = false
+    }
+
+    private fun createTrackChoices(tracks: Tracks, trackType: Int): List<TrackChoice> =
+        tracks.groups.mapIndexedNotNull { groupIndex, group ->
+            if (group.type != trackType || !group.isSupported) return@mapIndexedNotNull null
+            val trackIndices = (0 until group.length).filter(group::isTrackSupported)
+            if (trackIndices.isEmpty()) return@mapIndexedNotNull null
+
+            val format = group.getTrackFormat(trackIndices.first())
+            val label = format.label?.takeIf(String::isNotBlank)
+                ?: format.language?.takeIf { it.isNotBlank() && it != "und" }
+                ?: "Piste ${groupIndex + 1}"
+            TrackChoice(label, group.mediaTrackGroup, trackIndices, group.isSelected)
+        }
+
+    private fun applyVideoQuality(quality: VideoQuality) {
+        val activePlayer = player ?: return
+        if (!canSetTrackSelectionParameters) return
+        val parameters = activePlayer.trackSelectionParameters.buildUpon()
+            .clearVideoSizeConstraints()
+            .apply {
+                when (quality) {
+                    VideoQuality.AUTO -> Unit
+                    VideoQuality.SD -> setMaxVideoSizeSd()
+                    VideoQuality.HD -> setMaxVideoSize(1280, 720)
+                }
+            }
+            .build()
+        activePlayer.trackSelectionParameters = parameters
+        videoQuality = quality
+    }
+
+    private fun selectTrack(trackType: Int, choice: TrackChoice? = null, disabled: Boolean = false) {
+        val activePlayer = player ?: return
+        if (!canSetTrackSelectionParameters) return
+        val builder = activePlayer.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(trackType)
+            .setTrackTypeDisabled(trackType, disabled)
+        if (choice != null) {
+            builder.setOverrideForType(
+                TrackSelectionOverride(choice.mediaTrackGroup, choice.trackIndices)
+            )
+        }
+        activePlayer.trackSelectionParameters = builder.build()
+        if (trackType == C.TRACK_TYPE_TEXT) subtitlesDisabled = disabled
     }
 
     private val playbackUiListener = object : Player.Listener {
@@ -147,6 +228,10 @@ class MainActivity : ComponentActivity() {
         override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
             player?.let(::updatePlaylistState)
         }
+
+        override fun onTracksChanged(tracks: Tracks) {
+            updateTrackChoices(tracks)
+        }
     }
 
     @OptIn(UnstableApi::class)
@@ -168,6 +253,9 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             var tab by remember { mutableIntStateOf(0) }
+            var qualityMenuExpanded by remember { mutableStateOf(false) }
+            var audioMenuExpanded by remember { mutableStateOf(false) }
+            var textMenuExpanded by remember { mutableStateOf(false) }
             Column(Modifier.systemBarsPadding()) {
                 TabRow(selectedTabIndex = tab) {
                     Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Lecteur") })
@@ -207,6 +295,114 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             ) {
                                 Text("Réessayer")
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (hasVideoTracks) {
+                                Box {
+                                    Button(
+                                        enabled = canSetTrackSelectionParameters,
+                                        onClick = { qualityMenuExpanded = true }
+                                    ) {
+                                        Text("Qualité : ${videoQuality.label}")
+                                    }
+                                    DropdownMenu(
+                                        expanded = qualityMenuExpanded,
+                                        onDismissRequest = { qualityMenuExpanded = false }
+                                    ) {
+                                        VideoQuality.values().forEach { quality ->
+                                            DropdownMenuItem(
+                                                text = { Text(quality.label) },
+                                                onClick = {
+                                                    applyVideoQuality(quality)
+                                                    qualityMenuExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            if (audioTrackChoices.size > 1) {
+                                Box {
+                                    Button(
+                                        enabled = canSetTrackSelectionParameters,
+                                        onClick = { audioMenuExpanded = true }
+                                    ) {
+                                        val selectedAudio = audioTrackChoices
+                                            .firstOrNull(TrackChoice::isSelected)?.label ?: "Auto"
+                                        Text("Audio : $selectedAudio")
+                                    }
+                                    DropdownMenu(
+                                        expanded = audioMenuExpanded,
+                                        onDismissRequest = { audioMenuExpanded = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Auto") },
+                                            onClick = {
+                                                selectTrack(C.TRACK_TYPE_AUDIO)
+                                                audioMenuExpanded = false
+                                            }
+                                        )
+                                        audioTrackChoices.forEach { choice ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(if (choice.isSelected) "✓ ${choice.label}" else choice.label)
+                                                },
+                                                onClick = {
+                                                    selectTrack(C.TRACK_TYPE_AUDIO, choice)
+                                                    audioMenuExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (textTrackChoices.isNotEmpty()) {
+                            Box(Modifier.padding(horizontal = 8.dp)) {
+                                Button(
+                                    enabled = canSetTrackSelectionParameters,
+                                    onClick = { textMenuExpanded = true }
+                                ) {
+                                    val selectedText = textTrackChoices
+                                        .firstOrNull(TrackChoice::isSelected)?.label
+                                        ?: if (subtitlesDisabled) "Désactivés" else "Auto"
+                                    Text("Sous-titres : $selectedText")
+                                }
+                                DropdownMenu(
+                                    expanded = textMenuExpanded,
+                                    onDismissRequest = { textMenuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Désactivés") },
+                                        onClick = {
+                                            selectTrack(C.TRACK_TYPE_TEXT, disabled = true)
+                                            textMenuExpanded = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Auto") },
+                                        onClick = {
+                                            selectTrack(C.TRACK_TYPE_TEXT)
+                                            textMenuExpanded = false
+                                        }
+                                    )
+                                    textTrackChoices.forEach { choice ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(if (choice.isSelected) "✓ ${choice.label}" else choice.label)
+                                            },
+                                            onClick = {
+                                                selectTrack(C.TRACK_TYPE_TEXT, choice)
+                                                textMenuExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                         Row(

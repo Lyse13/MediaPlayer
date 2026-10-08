@@ -135,10 +135,6 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         val player = ExoPlayer.Builder(this).build().apply {
-            trackSelectionParameters = trackSelectionParameters
-                .buildUpon()
-                .setMaxVideoSizeSd()
-                .build()
             addListener(playbackListener)
             addAnalyticsListener(EventLogger())
             addAnalyticsListener(
