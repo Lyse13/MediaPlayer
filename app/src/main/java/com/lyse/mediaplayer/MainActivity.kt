@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
@@ -35,10 +36,13 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -473,32 +477,75 @@ class MainActivity : ComponentActivity() {
                             factory = { context -> PlayerView(context) },
                             update = { view -> view.player = player }
                         )
-                        Text(
-                            text = when {
-                                playbackError != null -> "Erreur de lecture"
-                                isPlaying -> "Lecture en cours"
-                                playbackState == Player.STATE_BUFFERING -> "Chargement…"
-                                playbackState == Player.STATE_READY -> "En pause"
-                                playbackState == Player.STATE_ENDED -> "Lecture terminée"
-                                else -> "Lecteur prêt"
-                            },
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        )
-                        playbackError?.let { message ->
-                            Text(
-                                text = message,
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                        val playbackStatus = when {
+                            playbackError != null -> "Erreur de lecture"
+                            isPlaying -> "Lecture en cours"
+                            playbackState == Player.STATE_BUFFERING -> "Chargement…"
+                            playbackState == Player.STATE_READY -> "En pause"
+                            playbackState == Player.STATE_ENDED -> "Lecture terminée"
+                            else -> "Lecteur prêt"
+                        }
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (playbackError != null) {
+                                    MaterialTheme.colorScheme.errorContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surface
+                                }
                             )
-                            Button(
-                                onClick = {
-                                    val activePlayer = player ?: return@Button
-                                    playbackError = null
-                                    activePlayer.prepare()
-                                    activePlayer.play()
-                                },
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Text("Réessayer")
+                                if (playbackState == Player.STATE_BUFFERING && playbackError == null) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        playlistItems.getOrNull(currentIndex)?.mediaMetadata?.title?.toString()
+                                            ?: "Aucune piste sélectionnée",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = if (playbackError != null) {
+                                            MaterialTheme.colorScheme.onErrorContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface
+                                        }
+                                    )
+                                    Text(
+                                        playbackStatus,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (playbackError != null) {
+                                            MaterialTheme.colorScheme.onErrorContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        }
+                                    )
+                                    playbackError?.let { message ->
+                                        Text(
+                                            message,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                    }
+                                }
+                                if (playbackError != null) {
+                                    Button(
+                                        onClick = {
+                                            val activePlayer = player ?: return@Button
+                                            playbackError = null
+                                            activePlayer.prepare()
+                                            activePlayer.play()
+                                        }
+                                    ) {
+                                        Text("Réessayer")
+                                    }
+                                }
                             }
                         }
                         if (player != null) PlaybackProgress(player)
@@ -615,13 +662,13 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Button(
+                            OutlinedButton(
                                 enabled = canSkipPrevious,
                                 onClick = { player?.seekToPreviousMediaItem() }
                             ) {
                                 Text("← Précédent")
                             }
-                            Button(
+                            OutlinedButton(
                                 enabled = canSkipNext,
                                 onClick = { player?.seekToNextMediaItem() }
                             ) {
@@ -633,15 +680,15 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Button(
+                            FilledTonalButton(
                                 enabled = canSetShuffleMode,
                                 onClick = {
                                     player?.shuffleModeEnabled = !shuffleModeEnabled
                                 }
                             ) {
-                                Text("Aléatoire")
+                                Text(if (shuffleModeEnabled) "Aléatoire : actif" else "Aléatoire : inactif")
                             }
-                            Button(
+                            FilledTonalButton(
                                 enabled = canSetRepeatMode,
                                 onClick = {
                                     val nextRepeatMode = when (repeatMode) {
@@ -652,22 +699,15 @@ class MainActivity : ComponentActivity() {
                                     player?.repeatMode = nextRepeatMode
                                 }
                             ) {
-                                Text("Répéter")
-                            }
-                        }
-                        Text(
-                            text = buildList {
-                                add(if (shuffleModeEnabled) "Aléatoire activé" else "Aléatoire désactivé")
-                                add(
+                                Text(
                                     when (repeatMode) {
-                                        Player.REPEAT_MODE_ONE -> "Répétition du titre"
-                                        Player.REPEAT_MODE_ALL -> "Répétition de la playlist"
-                                        else -> "Répétition désactivée"
+                                        Player.REPEAT_MODE_ONE -> "Répéter : titre"
+                                        Player.REPEAT_MODE_ALL -> "Répéter : playlist"
+                                        else -> "Répéter : non"
                                     }
                                 )
-                            }.joinToString(" • "),
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                        )
+                            }
+                        }
                         Button(
                             onClick = {
                                 (player as? MediaController)?.sendCustomCommand(
