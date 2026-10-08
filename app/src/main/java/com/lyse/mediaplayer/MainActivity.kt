@@ -477,6 +477,9 @@ class MainActivity : ComponentActivity() {
                             factory = { context -> PlayerView(context) },
                             update = { view -> view.player = player }
                         )
+                        LazyColumn(modifier = Modifier.weight(1f)) {
+                            item {
+                                Column(Modifier.fillMaxWidth()) {
                         val playbackStatus = when {
                             playbackError != null -> "Erreur de lecture"
                             isPlaying -> "Lecture en cours"
@@ -724,7 +727,8 @@ class MainActivity : ComponentActivity() {
                             Spacer(Modifier.width(8.dp))
                             Text(if (isFavorite) "Retirer des favoris" else "Ajouter aux favoris")
                         }
-                        LazyColumn(modifier = Modifier.weight(1f)) {
+                                }
+                            }
                             item {
                                 Text(
                                     "Playlist (${playlistItems.size})",
