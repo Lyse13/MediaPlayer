@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -134,7 +137,19 @@ fun EditorScreen() {
         Spacer(Modifier.height(16.dp))
 
         if (videoUri == null) {
-            Text("Aucune vidéo sélectionnée")
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                    Text("Aucune vidéo sélectionnée", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Choisissez une vidéo pour prévisualiser la découpe, la rotation et le recadrage.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             return@Column
         }
 
@@ -147,40 +162,56 @@ fun EditorScreen() {
             Spacer(Modifier.height(16.dp))
             val startS = range.start * durationMs / 1000f
             val endS = range.endInclusive * durationMs / 1000f
-            Text("Découpe : %.1f s → %.1f s (sur %.1f s)".format(startS, endS, durationMs / 1000f))
-            RangeSlider(
-                value = range,
-                onValueChange = { range = it },
-                onValueChangeFinished = { applyEdits() }
-            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text("Réglages de l’aperçu", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Découpe : %.1f s → %.1f s (sur %.1f s)".format(
+                            startS,
+                            endS,
+                            durationMs / 1000f
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    RangeSlider(
+                        value = range,
+                        onValueChange = { range = it },
+                        onValueChangeFinished = { applyEdits() }
+                    )
 
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Rotation 90°")
-                Switch(
-                    checked = rotate,
-                    onCheckedChange = {
-                        rotate = it
-                        applyEdits(rotationEnabled = it)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Rotation 90°")
+                        Switch(
+                            checked = rotate,
+                            onCheckedChange = {
+                                rotate = it
+                                applyEdits(rotationEnabled = it)
+                            }
+                        )
                     }
-                )
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Recadrage centré")
-                Switch(
-                    checked = crop,
-                    onCheckedChange = {
-                        crop = it
-                        applyEdits(cropEnabled = it)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Recadrage centré")
+                        Switch(
+                            checked = crop,
+                            onCheckedChange = {
+                                crop = it
+                                applyEdits(cropEnabled = it)
+                            }
+                        )
                     }
-                )
+                }
             }
         }
     }

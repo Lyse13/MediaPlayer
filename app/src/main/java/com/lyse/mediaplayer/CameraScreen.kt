@@ -19,7 +19,6 @@ import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.camera.view.video.AudioConfig
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,7 +29,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -130,15 +134,25 @@ fun CameraScreen() {
 
     Column(Modifier.fillMaxSize()) {
         if (!hasCamera) {
-            Column(Modifier.padding(16.dp)) {
-                Text("L'accès à la caméra est nécessaire pour utiliser cet onglet.")
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = {
-                    permissionLauncher.launch(
-                        arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Autorisation requise", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "L’accès à la caméra est nécessaire pour utiliser cet onglet.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }) {
-                    Text("Autoriser la caméra")
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = {
+                        permissionLauncher.launch(
+                            arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+                        )
+                    }) {
+                        Text("Autoriser la caméra")
+                    }
                 }
             }
             return@Column
@@ -156,78 +170,92 @@ fun CameraScreen() {
                 if (isEmpty() && !hasAudio) add("Micro non autorisé : les vidéos seront sans son.")
             }
             if (lines.isNotEmpty()) {
-                Text(
-                    lines.joinToString("\n"),
-                    color = Color.White,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp)
-                        .background(Color.Black.copy(alpha = 0.5f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "Analyse de luminosité (désactive la vidéo)",
-                modifier = Modifier.weight(1f))
-            Switch(
-                checked = analyzing,
-                enabled = !isRecording,
-                onCheckedChange = { setAnalysis(it) }
-            )
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            OutlinedButton(
-                enabled = !isRecording,
-                onClick = {
-                    useBackCamera = !useBackCamera
-                    controller.cameraSelector =
-                        if (useBackCamera) CameraSelector.DEFAULT_BACK_CAMERA
-                        else CameraSelector.DEFAULT_FRONT_CAMERA
+                Surface(
+                    modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
+                    color = Color.Black.copy(alpha = 0.62f),
+                    contentColor = Color.White,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        lines.joinToString("\n"),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
                 }
-            ) {
-                Text("Retourner")
             }
-            Button(
-                enabled = !isRecording,
-                onClick = { takePhoto(context, controller) { status = it } }
-            ) {
-                Text("Photo")
-            }
-            Button(enabled = !analyzing, onClick = {
-                if (isRecording) {
-                    recording?.stop()
-                } else {
-                    status = null
-                    seconds = 0L
-                    recording = startRecording(context, controller, hasAudio) { event ->
-                        when (event) {
-                            is VideoRecordEvent.Status ->
-                                seconds = event.recordingStats.recordedDurationNanos / 1_000_000_000
-                            is VideoRecordEvent.Finalize -> {
-                                recording = null
-                                status = if (event.hasError()) {
-                                    "Erreur vidéo (code ${event.error})"
-                                } else {
-                                    "Vidéo enregistrée dans Movies/MediaPlayer"
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                        Text("Analyse de luminosité", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Désactive la capture vidéo",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = analyzing,
+                        enabled = !isRecording,
+                        onCheckedChange = { setAnalysis(it) }
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    OutlinedButton(
+                        enabled = !isRecording,
+                        onClick = {
+                            useBackCamera = !useBackCamera
+                            controller.cameraSelector =
+                                if (useBackCamera) CameraSelector.DEFAULT_BACK_CAMERA
+                                else CameraSelector.DEFAULT_FRONT_CAMERA
+                        }
+                    ) {
+                        Text("Retourner")
+                    }
+                    Button(
+                        enabled = !isRecording,
+                        onClick = { takePhoto(context, controller) { status = it } }
+                    ) {
+                        Text("Photo")
+                    }
+                    Button(enabled = !analyzing, onClick = {
+                        if (isRecording) {
+                            recording?.stop()
+                        } else {
+                            status = null
+                            seconds = 0L
+                            recording = startRecording(context, controller, hasAudio) { event ->
+                                when (event) {
+                                    is VideoRecordEvent.Status ->
+                                        seconds = event.recordingStats.recordedDurationNanos / 1_000_000_000
+                                    is VideoRecordEvent.Finalize -> {
+                                        recording = null
+                                        status = if (event.hasError()) {
+                                            "Erreur vidéo (code ${event.error})"
+                                        } else {
+                                            "Vidéo enregistrée dans Movies/MediaPlayer"
+                                        }
+                                    }
+                                    else -> Unit
                                 }
                             }
-                            else -> Unit
                         }
+                    }) {
+                        Text(if (isRecording) "Arrêter" else "Vidéo")
                     }
                 }
-            }) {
-                Text(if (isRecording) "Arrêter" else "Vidéo")
             }
         }
     }
