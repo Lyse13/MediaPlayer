@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">MediaPlayer</string>
+    <string name="download_notification_channel">Téléchargements multimédias</string>
+    <string name="download_notification_channel_description">Progression des téléchargements hors ligne</string>
 </resources>

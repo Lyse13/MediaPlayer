@@ -151,9 +151,13 @@ class PlaybackService : MediaSessionService() {
         val cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(cache)
             .setUpstreamDataSourceFactory(DefaultDataSource.Factory(this))
+        val playbackDataSourceFactory = OfflineDownloads.createPlaybackDataSourceFactory(
+            this,
+            cacheDataSourceFactory
+        )
         val player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(this).setDataSourceFactory(cacheDataSourceFactory)
+                DefaultMediaSourceFactory(this).setDataSourceFactory(playbackDataSourceFactory)
             )
             .build().apply {
                 addListener(playbackListener)

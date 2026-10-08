@@ -2,6 +2,7 @@ package com.lyse.mediaplayer
 
 import android.Manifest
 import android.content.ComponentName
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -56,6 +57,10 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.inspector.MetadataRetriever
+import androidx.media3.exoplayer.offline.Download
+import androidx.media3.exoplayer.offline.DownloadManager
+import androidx.media3.exoplayer.offline.DownloadRequest
+import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -67,6 +72,7 @@ import com.google.common.util.concurrent.FutureCallback
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
 
 
 private const val DASH_URL =
@@ -94,6 +100,7 @@ private data class TrackChoice(
     val isSelected: Boolean
 )
 
+@OptIn(UnstableApi::class)
 class MainActivity : ComponentActivity() {
 
     private val tracks by lazy {
@@ -129,6 +136,29 @@ class MainActivity : ComponentActivity() {
     private var subtitlesDisabled by mutableStateOf(false)
     private var metadataMessage by mutableStateOf<String?>(null)
     private var metadataRequestId = 0
+    private var downloads by mutableStateOf<Map<String, Download>>(emptyMap())
+    private var downloadManager: DownloadManager? = null
+    private val downloadLookupExecutor = Executors.newSingleThreadExecutor()
+
+    private val downloadManagerListener = object : DownloadManager.Listener {
+        override fun onInitialized(downloadManager: DownloadManager) {
+            refreshDownloadStates(downloadManager)
+        }
+
+        override fun onDownloadChanged(
+            downloadManager: DownloadManager,
+            download: Download,
+            finalException: Exception?
+        ) {
+            downloads = downloads.toMutableMap().apply {
+                put(download.request.id, download)
+            }
+        }
+
+        override fun onDownloadRemoved(downloadManager: DownloadManager, download: Download) {
+            downloads = downloads - download.request.id
+        }
+    }
 
     private fun createMediaItem(track: Track): MediaItem =
         MediaItem.Builder()
@@ -193,6 +223,57 @@ class MainActivity : ComponentActivity() {
     private fun formatMetadataDuration(durationMs: Long): String {
         val totalSeconds = durationMs / 1_000
         return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun refreshDownloadStates(manager: DownloadManager) {
+        downloadLookupExecutor.execute {
+            val restoredDownloads = tracks.mapNotNull { track ->
+                try {
+                    manager.downloadIndex.getDownload(track.url)
+                } catch (_: Exception) {
+                    null
+                }
+            }.associateBy { it.request.id }
+            runOnUiThread {
+                if (!isDestroyed) downloads = restoredDownloads
+            }
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun addOfflineDownload(track: Track) {
+        val requestBuilder = DownloadRequest.Builder(track.url, Uri.parse(track.url))
+        track.mimeType?.let(requestBuilder::setMimeType)
+        DownloadService.sendAddDownload(
+            this,
+            OfflineDownloadService::class.java,
+            requestBuilder.build(),
+            true
+        )
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun removeOfflineDownload(id: String) {
+        DownloadService.sendRemoveDownload(
+            this,
+            OfflineDownloadService::class.java,
+            id,
+            true
+        )
+    }
+
+    private fun downloadStatus(download: Download): String = when (download.state) {
+        Download.STATE_QUEUED -> "En attente"
+        Download.STATE_DOWNLOADING -> {
+            val percent = download.percentDownloaded
+            if (percent >= 0f) "Téléchargement · ${percent.toInt()}%" else "Téléchargement…"
+        }
+        Download.STATE_COMPLETED -> "Disponible hors ligne"
+        Download.STATE_FAILED -> "Échec · appuyer pour réessayer"
+        Download.STATE_REMOVING, Download.STATE_RESTARTING -> "Mise à jour…"
+        Download.STATE_STOPPED -> "En pause"
+        else -> ""
     }
 
     private fun updatePlaylistState(source: Player) {
@@ -624,6 +705,37 @@ class MainActivity : ComponentActivity() {
                                     TextButton(onClick = { inspectMetadata(track) }) {
                                         Text("Infos")
                                     }
+                                    val download = downloads[track.url]
+                                    TextButton(
+                                        enabled = (track.url.startsWith("https://") ||
+                                            track.url.startsWith("http://")) && track.url != HLS_LIVE_URL,
+                                        onClick = {
+                                            if (download?.state == Download.STATE_COMPLETED ||
+                                                download?.state == Download.STATE_DOWNLOADING ||
+                                                download?.state == Download.STATE_QUEUED
+                                            ) {
+                                                removeOfflineDownload(track.url)
+                                            } else {
+                                                addOfflineDownload(track)
+                                            }
+                                        }
+                                    ) {
+                                        Text(
+                                            when {
+                                                track.url == HLS_LIVE_URL -> "Direct"
+                                                download?.state == Download.STATE_COMPLETED -> "Retirer"
+                                                download?.state == Download.STATE_DOWNLOADING ||
+                                                    download?.state == Download.STATE_QUEUED -> "Annuler"
+                                                else -> "Hors ligne"
+                                            }
+                                        )
+                                    }
+                                }
+                                downloads[track.url]?.let { download ->
+                                    Text(
+                                        downloadStatus(download),
+                                        modifier = Modifier.padding(horizontal = 16.dp)
+                                    )
                                 }
                             }
                         }
@@ -642,6 +754,10 @@ class MainActivity : ComponentActivity() {
     @OptIn(UnstableApi::class)
     override fun onStart() {
         super.onStart()
+        val manager = OfflineDownloads.getManager(this)
+        downloadManager = manager
+        manager.addListener(downloadManagerListener)
+        DownloadService.start(this, OfflineDownloadService::class.java)
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(this, token)
             .setListener(object : MediaController.Listener {
@@ -696,10 +812,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        downloadManager?.removeListener(downloadManagerListener)
+        downloadManager = null
         player?.removeListener(playbackUiListener)
         player = null
         val future = controllerFuture
         controllerFuture = null
         future?.let { MediaController.releaseFuture(it) }
+    }
+
+    override fun onDestroy() {
+        downloadLookupExecutor.shutdown()
+        super.onDestroy()
     }
 }
