@@ -7,6 +7,9 @@ import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
+import androidx.media3.exoplayer.analytics.PlaybackStatsListener
+import androidx.media3.exoplayer.util.EventLogger
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
@@ -138,6 +141,20 @@ class PlaybackService : MediaSessionService() {
                 .setMaxVideoSizeSd()
                 .build()
             addListener(playbackListener)
+            addAnalyticsListener(EventLogger())
+            addAnalyticsListener(
+                PlaybackStatsListener(/* keepHistory= */ false) { eventTime, stats ->
+                    val title = eventTime.timeline
+                        .getWindow(eventTime.windowIndex, Timeline.Window())
+                        .mediaItem.mediaMetadata.title
+                    Log.d(
+                        TAG,
+                        "Playback summary for $title: play time = ${stats.totalPlayTimeMs} ms, " +
+                                "rebuffers = ${stats.totalRebufferCount}, " +
+                                "mean video bitrate = ${stats.meanVideoFormatBitrate}"
+                    )
+                }
+            )
             addListener(object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     updateButtons()
