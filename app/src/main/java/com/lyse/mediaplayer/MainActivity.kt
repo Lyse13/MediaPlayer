@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -45,6 +49,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
@@ -67,6 +72,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.C
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.inspector.MetadataRetriever
@@ -144,6 +150,7 @@ class MainActivity : ComponentActivity() {
     private var shuffleModeEnabled by mutableStateOf(false)
     private var videoQuality by mutableStateOf(VideoQuality.AUTO)
     private var hasVideoTracks by mutableStateOf(false)
+    private var audioOnly by mutableStateOf(false)
     private var audioTrackChoices by mutableStateOf<List<TrackChoice>>(emptyList())
     private var textTrackChoices by mutableStateOf<List<TrackChoice>>(emptyList())
     private var subtitlesDisabled by mutableStateOf(false)
@@ -178,7 +185,12 @@ class MainActivity : ComponentActivity() {
             .setMediaId(track.url)
             .setUri(track.url)
             .setMimeType(track.mimeType)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).build())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(track.title)
+                    .setArtworkUri(Uri.parse("android.resource://$packageName/${R.drawable.sample_image}"))
+                    .build()
+            )
             .build()
 
     @OptIn(UnstableApi::class)
@@ -358,6 +370,16 @@ class MainActivity : ComponentActivity() {
         if (trackType == C.TRACK_TYPE_TEXT) subtitlesDisabled = disabled
     }
 
+    private fun applyAudioOnlyMode(enabled: Boolean) {
+        val activePlayer = player ?: return
+        if (!canSetTrackSelectionParameters) return
+        activePlayer.trackSelectionParameters = activePlayer.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, enabled)
+            .build()
+        audioOnly = enabled
+    }
+
     private val playbackUiListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             this@MainActivity.playbackState = playbackState
@@ -395,6 +417,10 @@ class MainActivity : ComponentActivity() {
 
         override fun onTracksChanged(tracks: Tracks) {
             updateTrackChoices(tracks)
+        }
+
+        override fun onTrackSelectionParametersChanged(parameters: TrackSelectionParameters) {
+            audioOnly = C.TRACK_TYPE_VIDEO in parameters.disabledTrackTypes
         }
     }
 
@@ -617,7 +643,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        if (textTrackChoices.isNotEmpty()) {
+                            if (textTrackChoices.isNotEmpty()) {
                             Box(Modifier.padding(horizontal = 8.dp)) {
                                 Button(
                                     enabled = canSetTrackSelectionParameters,
@@ -659,7 +685,31 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                        }
+                            }
+                            if (hasVideoTracks && audioTrackChoices.isNotEmpty()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                                        Text(
+                                            "Audio seulement",
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Text(
+                                            "Désactive la piste vidéo",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = audioOnly,
+                                        enabled = canSetTrackSelectionParameters,
+                                        onCheckedChange = ::applyAudioOnlyMode
+                                    )
+                                }
+                            }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly,
@@ -752,6 +802,13 @@ class MainActivity : ComponentActivity() {
                                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        Image(
+                                            painter = painterResource(R.drawable.sample_image),
+                                            contentDescription = "Illustration de ${item.mediaMetadata.title ?: "la piste"}",
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                        )
                                         Text(
                                             text = item.mediaMetadata.title?.toString() ?: item.mediaId,
                                             fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
@@ -935,6 +992,8 @@ class MainActivity : ComponentActivity() {
             updatePlaylistState(controller)
             playbackState = controller.playbackState
             isPlaying = controller.isPlaying
+            audioOnly = C.TRACK_TYPE_VIDEO in
+                controller.trackSelectionParameters.disabledTrackTypes
             playbackError = controller.playerError?.let { error ->
                 error.localizedMessage ?: error.cause?.localizedMessage ?: error.errorCodeName
             }
