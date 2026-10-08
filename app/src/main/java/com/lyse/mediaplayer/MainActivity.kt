@@ -128,6 +128,11 @@ class MainActivity : ComponentActivity() {
             Track("Jazz in Paris (audio)", "https://storage.googleapis.com/exoplayer-test-media-0/Jazz_In_Paris.mp3"),
             Track("Local sample (audio)", "android.resource://$packageName/${R.raw.sample_audio}"),
             Track("Streaming adaptatif DASH (vidéo)", DASH_URL, MimeTypes.APPLICATION_MPD),
+            Track(
+                "DASH avec sous-titres (Elephants Dream)",
+                "https://dash.akamaized.net/akamai/test/caption_test/ElephantsDream/elephants_dream_480p_heaac5_1_https.mpd",
+                MimeTypes.APPLICATION_MPD
+            ),
             Track("HLS adaptatif (vidéo à la demande)", HLS_VOD_URL, MimeTypes.APPLICATION_M3U8),
             Track("HLS en direct (test)", HLS_LIVE_URL, MimeTypes.APPLICATION_M3U8),
         )
