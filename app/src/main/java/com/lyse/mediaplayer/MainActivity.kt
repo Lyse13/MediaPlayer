@@ -18,9 +18,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -28,11 +31,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
@@ -46,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.lyse.mediaplayer.ui.theme.MediaPlayerTheme
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
@@ -407,13 +416,57 @@ class MainActivity : ComponentActivity() {
             var qualityMenuExpanded by remember { mutableStateOf(false) }
             var audioMenuExpanded by remember { mutableStateOf(false) }
             var textMenuExpanded by remember { mutableStateOf(false) }
-            Column(Modifier.systemBarsPadding()) {
-                TabRow(selectedTabIndex = tab) {
-                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Lecteur") })
-                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Éditeur") })
-                    Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Caméra") })
-                }
-                when (tab) {
+            MediaPlayerTheme {
+                Scaffold(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    topBar = {
+                        Surface(
+                            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 2.dp
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                                Text(
+                                    "MEDIA PLAYER",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    when (tab) {
+                                        0 -> "Votre lecteur"
+                                        1 -> "Éditeur vidéo"
+                                        else -> "Caméra"
+                                    },
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    },
+                    bottomBar = {
+                        NavigationBar(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 4.dp
+                        ) {
+                            listOf("Lecteur", "Éditeur", "Caméra").forEachIndexed { index, label ->
+                                NavigationBarItem(
+                                    selected = tab == index,
+                                    onClick = { tab = index },
+                                    icon = {
+                                        Text(listOf("▶", "✂", "●")[index])
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                    }
+                ) { contentPadding ->
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(contentPadding)
+                    ) {
+                        when (tab) {
                     0 -> {
                         AndroidView(
                             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
@@ -635,50 +688,68 @@ class MainActivity : ComponentActivity() {
                             item {
                                 Text(
                                     "Playlist (${playlistItems.size})",
-                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                                 )
                             }
                             itemsIndexed(playlistItems) { index, item ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = item.mediaMetadata.title?.toString() ?: item.mediaId,
-                                        fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clickable {
-                                                player?.seekToDefaultPosition(index)
-                                                player?.play()
-                                            }
-                                            .padding(8.dp)
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (index == currentIndex) {
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.surface
+                                        }
                                     )
-                                    TextButton(
-                                        enabled = canChangePlaylist && index > 0,
-                                        onClick = { player?.moveMediaItem(index, index - 1) }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("↑")
-                                    }
-                                    TextButton(
-                                        enabled = canChangePlaylist && index < playlistItems.lastIndex,
-                                        onClick = { player?.moveMediaItem(index, index + 1) }
-                                    ) {
-                                        Text("↓")
-                                    }
-                                    TextButton(
-                                        enabled = canChangePlaylist,
-                                        onClick = { player?.removeMediaItem(index) }
-                                    ) {
-                                        Text("Retirer")
+                                        Text(
+                                            text = item.mediaMetadata.title?.toString() ?: item.mediaId,
+                                            fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (index == currentIndex) {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clickable {
+                                                    player?.seekToDefaultPosition(index)
+                                                    player?.play()
+                                                }
+                                                .padding(8.dp)
+                                        )
+                                        TextButton(
+                                            enabled = canChangePlaylist && index > 0,
+                                            onClick = { player?.moveMediaItem(index, index - 1) }
+                                        ) {
+                                            Text("↑")
+                                        }
+                                        TextButton(
+                                            enabled = canChangePlaylist && index < playlistItems.lastIndex,
+                                            onClick = { player?.moveMediaItem(index, index + 1) }
+                                        ) {
+                                            Text("↓")
+                                        }
+                                        TextButton(
+                                            enabled = canChangePlaylist,
+                                            onClick = { player?.removeMediaItem(index) }
+                                        ) {
+                                            Text("Retirer")
+                                        }
                                     }
                                 }
                             }
                             item {
                                 Text(
                                     "Ajouter à la playlist",
-                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                                 )
                             }
@@ -691,44 +762,58 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             items(tracks) { track ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surface
+                                    )
                                 ) {
-                                    Text(track.title, modifier = Modifier.weight(1f))
-                                    Button(
-                                        enabled = canChangePlaylist,
-                                        onClick = { player?.addMediaItem(createMediaItem(track)) }
-                                    ) {
-                                        Text("Ajouter")
-                                    }
-                                    TextButton(onClick = { inspectMetadata(track) }) {
-                                        Text("Infos")
-                                    }
-                                    val download = downloads[track.url]
-                                    TextButton(
-                                        enabled = (track.url.startsWith("https://") ||
-                                            track.url.startsWith("http://")) && track.url != HLS_LIVE_URL,
-                                        onClick = {
-                                            if (download?.state == Download.STATE_COMPLETED ||
-                                                download?.state == Download.STATE_DOWNLOADING ||
-                                                download?.state == Download.STATE_QUEUED
+                                    Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp)) {
+                                        Text(
+                                            track.title,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            modifier = Modifier.padding(top = 10.dp, end = 8.dp)
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Button(
+                                                enabled = canChangePlaylist,
+                                                onClick = { player?.addMediaItem(createMediaItem(track)) }
                                             ) {
-                                                removeOfflineDownload(track.url)
-                                            } else {
-                                                addOfflineDownload(track)
+                                                Text("Ajouter")
+                                            }
+                                            TextButton(onClick = { inspectMetadata(track) }) {
+                                                Text("Infos")
+                                            }
+                                            val download = downloads[track.url]
+                                            TextButton(
+                                                enabled = (track.url.startsWith("https://") ||
+                                                    track.url.startsWith("http://")) && track.url != HLS_LIVE_URL,
+                                                onClick = {
+                                                    if (download?.state == Download.STATE_COMPLETED ||
+                                                        download?.state == Download.STATE_DOWNLOADING ||
+                                                        download?.state == Download.STATE_QUEUED
+                                                    ) {
+                                                        removeOfflineDownload(track.url)
+                                                    } else {
+                                                        addOfflineDownload(track)
+                                                    }
+                                                }
+                                            ) {
+                                                Text(
+                                                    when {
+                                                        track.url == HLS_LIVE_URL -> "Direct"
+                                                        download?.state == Download.STATE_COMPLETED -> "Retirer"
+                                                        download?.state == Download.STATE_DOWNLOADING ||
+                                                            download?.state == Download.STATE_QUEUED -> "Annuler"
+                                                        else -> "Hors ligne"
+                                                    }
+                                                )
                                             }
                                         }
-                                    ) {
-                                        Text(
-                                            when {
-                                                track.url == HLS_LIVE_URL -> "Direct"
-                                                download?.state == Download.STATE_COMPLETED -> "Retirer"
-                                                download?.state == Download.STATE_DOWNLOADING ||
-                                                    download?.state == Download.STATE_QUEUED -> "Annuler"
-                                                else -> "Hors ligne"
-                                            }
-                                        )
                                     }
                                 }
                                 downloads[track.url]?.let { download ->
@@ -745,6 +830,8 @@ class MainActivity : ComponentActivity() {
                     }
                     else -> {
                         CameraScreen()
+                    }
+                }
                     }
                 }
             }
