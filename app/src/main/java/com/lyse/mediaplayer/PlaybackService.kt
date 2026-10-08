@@ -1,6 +1,5 @@
 package com.lyse.mediaplayer
 
-import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.annotation.OptIn
@@ -170,11 +169,6 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
         mediaSession
-
-    @OptIn(UnstableApi::class)
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        pauseAllPlayersAndStopSelf()
-    }
 
     override fun onDestroy() {
         mediaSession?.run {

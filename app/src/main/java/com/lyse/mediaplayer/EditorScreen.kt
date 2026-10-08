@@ -72,7 +72,10 @@ fun EditorScreen() {
     }
     DisposableEffect(Unit) { onDispose { player.release() } }
 
-    fun applyEdits() {
+    fun applyEdits(
+        rotationEnabled: Boolean = rotate,
+        cropEnabled: Boolean = crop,
+    ) {
         val uri = videoUri ?: return
         val startMs = (range.start * durationMs).toLong()
         val endMs = (range.endInclusive * durationMs).toLong()
@@ -88,8 +91,10 @@ fun EditorScreen() {
             .build()
 
         val effects = buildList<Effect> {
-            if (rotate) add(ScaleAndRotateTransformation.Builder().setRotationDegrees(90f).build())
-            if (crop) add(Crop(-0.5f, 0.5f, -0.5f, 0.5f)) // keeps the center half
+            if (rotationEnabled) {
+                add(ScaleAndRotateTransformation.Builder().setRotationDegrees(90f).build())
+            }
+            if (cropEnabled) add(Crop(-0.5f, 0.5f, -0.5f, 0.5f)) // keeps the center half
         }
         player.setVideoEffects(effects)
         player.setMediaItem(item)
@@ -155,7 +160,13 @@ fun EditorScreen() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Rotation 90°")
-                Switch(checked = rotate, onCheckedChange = { rotate = it; applyEdits() })
+                Switch(
+                    checked = rotate,
+                    onCheckedChange = {
+                        rotate = it
+                        applyEdits(rotationEnabled = it)
+                    }
+                )
             }
             Row(
                 Modifier.fillMaxWidth(),
@@ -163,7 +174,13 @@ fun EditorScreen() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Recadrage centré")
-                Switch(checked = crop, onCheckedChange = { crop = it; applyEdits() })
+                Switch(
+                    checked = crop,
+                    onCheckedChange = {
+                        crop = it
+                        applyEdits(cropEnabled = it)
+                    }
+                )
             }
         }
     }
