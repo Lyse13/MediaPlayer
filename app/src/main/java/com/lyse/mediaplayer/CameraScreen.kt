@@ -15,6 +15,10 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.TorchState
 import androidx.camera.core.ZoomState
+import androidx.camera.extensions.ExtensionMode
+import androidx.camera.extensions.ExtensionsManager
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.lifecycle.awaitInstance
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.Quality
@@ -92,6 +96,10 @@ fun CameraScreen() {
     var videoQualityMenuExpanded by remember { mutableStateOf(false) }
     var videoDynamicRange by remember { mutableStateOf(DynamicRange.SDR) }
     var slowMotionMode by remember { mutableStateOf(false) }
+    var extensionMode by remember { mutableIntStateOf(ExtensionMode.NONE) }
+    var extensionMenuExpanded by remember { mutableStateOf(false) }
+    var extensionsManager by remember { mutableStateOf<ExtensionsManager?>(null) }
+    var availableExtensions by remember { mutableStateOf(emptyList<Int>()) }
     var torchState by remember { mutableIntStateOf(TorchState.OFF) }
     var exposureIndex by remember { mutableIntStateOf(0) }
     var zoomRatio by remember { mutableFloatStateOf(1f) }
@@ -119,6 +127,15 @@ fun CameraScreen() {
         if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
     }
 
+    LaunchedEffect(hasCamera) {
+        if (hasCamera) {
+            runCatching {
+                val provider = ProcessCameraProvider.awaitInstance(context)
+                ExtensionsManager.getInstance(context, provider)
+            }.onSuccess { manager -> extensionsManager = manager }
+        }
+    }
+
     val controller = remember {
         LifecycleCameraController(context).apply {
             setEnabledUseCases(CameraController.IMAGE_CAPTURE or CameraController.VIDEO_CAPTURE)
@@ -144,7 +161,7 @@ fun CameraScreen() {
     }
     val supportedHdrDynamicRange = supportedVideoDynamicRanges.firstOrNull {
         it == DynamicRange.HLG_10_BIT || it == DynamicRange.HDR10_10_BIT
-    }
+    }.takeIf { extensionMode == ExtensionMode.NONE }
     val supportedVideoQualities = remember(cameraInfo, videoDynamicRange) {
         cameraInfo?.let {
             runCatching {
@@ -194,6 +211,39 @@ fun CameraScreen() {
         ) {
             videoDynamicRange = DynamicRange.SDR
             controller.setVideoCaptureDynamicRange(DynamicRange.SDR)
+        }
+    }
+
+    LaunchedEffect(extensionsManager, useBackCamera, extensionMode) {
+        val manager = extensionsManager ?: return@LaunchedEffect
+        val baseSelector = if (useBackCamera) {
+            CameraSelector.DEFAULT_BACK_CAMERA
+        } else {
+            CameraSelector.DEFAULT_FRONT_CAMERA
+        }
+        val modes = listOf(
+            ExtensionMode.AUTO,
+            ExtensionMode.BOKEH,
+            ExtensionMode.HDR,
+            ExtensionMode.NIGHT,
+            ExtensionMode.FACE_RETOUCH
+        ).filter { manager.isExtensionAvailable(baseSelector, it) }
+        availableExtensions = modes
+        if (extensionMode != ExtensionMode.NONE && extensionMode !in modes) {
+            extensionMode = ExtensionMode.NONE
+            controller.cameraSelector = baseSelector
+        } else {
+            runCatching {
+                controller.cameraSelector = if (extensionMode == ExtensionMode.NONE) {
+                    baseSelector
+                } else {
+                    manager.getExtensionEnabledCameraSelector(baseSelector, extensionMode)
+                }
+            }.onFailure { exception ->
+                extensionMode = ExtensionMode.NONE
+                controller.cameraSelector = baseSelector
+                status = "Effet caméra indisponible : ${exception.localizedMessage ?: "erreur caméra"}"
+            }
         }
     }
 
@@ -369,6 +419,37 @@ fun CameraScreen() {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Mode ralenti haute fréquence")
+                }
+                if (extensionsManager != null && availableExtensions.isNotEmpty()) {
+                    Box(Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            enabled = !isRecording && !analyzing,
+                            onClick = { extensionMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Effet constructeur : ${extensionLabel(extensionMode)}")
+                        }
+                        DropdownMenu(
+                            expanded = extensionMenuExpanded,
+                            onDismissRequest = { extensionMenuExpanded = false }
+                        ) {
+                            (listOf(ExtensionMode.NONE) + availableExtensions).forEach { mode ->
+                                DropdownMenuItem(
+                                    text = { Text(extensionLabel(mode)) },
+                                    onClick = {
+                                        extensionMode = mode
+                                        if (mode != ExtensionMode.NONE &&
+                                            videoDynamicRange != DynamicRange.SDR
+                                        ) {
+                                            videoDynamicRange = DynamicRange.SDR
+                                            controller.setVideoCaptureDynamicRange(DynamicRange.SDR)
+                                        }
+                                        extensionMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
                 if (supportedHdrDynamicRange != null) {
                     Row(
@@ -602,6 +683,15 @@ private fun dynamicRangeLabel(dynamicRange: DynamicRange): String = when (dynami
     DynamicRange.HLG_10_BIT -> "HLG"
     DynamicRange.HDR10_10_BIT -> "HDR10"
     else -> "HDR"
+}
+
+private fun extensionLabel(mode: Int): String = when (mode) {
+    ExtensionMode.AUTO -> "Automatique"
+    ExtensionMode.BOKEH -> "Flou d’arrière-plan"
+    ExtensionMode.HDR -> "HDR photo"
+    ExtensionMode.NIGHT -> "Nuit"
+    ExtensionMode.FACE_RETOUCH -> "Retouche visage"
+    else -> "Désactivé"
 }
 
 @SuppressLint("MissingPermission")
