@@ -49,6 +49,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.inspector.MetadataRetriever
+import androidx.media3.exoplayer.source.TrackGroupArray
 import androidx.media3.effect.Crop
 import androidx.media3.effect.ScaleAndRotateTransformation
 import androidx.media3.exoplayer.ExoPlayer
@@ -65,11 +67,19 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.core.content.ContextCompat
+import com.google.common.util.concurrent.FutureCallback
+import com.google.common.util.concurrent.Futures
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 fun EditorScreen() {
     val context = LocalContext.current
+    val metadataExecutor = remember { Executors.newSingleThreadScheduledExecutor() }
 
     var videoUri by remember { mutableStateOf<Uri?>(null) }
     var durationMs by remember { mutableLongStateOf(0L) }
@@ -80,6 +90,8 @@ fun EditorScreen() {
     var exportInProgress by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableIntStateOf(0) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
+    var metadataCheckInProgress by remember { mutableStateOf(false) }
+    var metadataCheckId by remember { mutableIntStateOf(0) }
     var exportedFile by remember { mutableStateOf<File?>(null) }
     var exportedUri by remember { mutableStateOf<Uri?>(null) }
     var inProgressFile by remember { mutableStateOf<File?>(null) }
@@ -111,6 +123,7 @@ fun EditorScreen() {
                 inProgressFile?.delete()
             }
             player.release()
+            metadataExecutor.shutdownNow()
         }
     }
 
@@ -230,10 +243,10 @@ fun EditorScreen() {
         player.play()
     }
 
-    fun startExport() {
+    fun startExport(verifiedDurationMs: Long = durationMs) {
         val uri = videoUri ?: return
-        val startMs = (range.start * durationMs).toLong()
-        val endMs = (range.endInclusive * durationMs).toLong()
+        val startMs = (range.start * verifiedDurationMs).toLong()
+        val endMs = (range.endInclusive * verifiedDurationMs).toLong()
         if (endMs - startMs < 500L) {
             exportMessage = "Choisissez une durée d’au moins 0,5 seconde."
             return
@@ -312,6 +325,97 @@ fun EditorScreen() {
         }
     }
 
+    fun validateVideoAndStartExport() {
+        val uri = videoUri ?: return
+        if (metadataCheckInProgress || exportInProgress || saveInProgress) return
+
+        val requestId = ++metadataCheckId
+        metadataCheckInProgress = true
+        exportMessage = "Vérification de la vidéo…"
+        val mediaItem = MediaItem.Builder().setUri(uri).build()
+        val retriever = try {
+            MetadataRetriever.Builder(context, mediaItem).build()
+        } catch (exception: Exception) {
+            metadataCheckInProgress = false
+            exportMessage = "Vérification impossible : ${exception.localizedMessage ?: "média inaccessible"}"
+            return
+        }
+
+        var checkedDurationUs: Long? = null
+        var checkedTrackGroups: TrackGroupArray? = null
+        var checkError: Throwable? = null
+        val remainingResults = AtomicInteger(2)
+        fun finishMetadataCheck() {
+            if (remainingResults.decrementAndGet() != 0) return
+            retriever.close()
+            if (requestId != metadataCheckId) return
+            metadataCheckInProgress = false
+
+            val error = checkError
+            if (error != null) {
+                var cause = error
+                while (cause.cause != null && cause.cause !== cause) cause = cause.cause!!
+                exportMessage = if (cause is TimeoutException) {
+                    "Vérification trop longue. Vérifie que la vidéo est accessible, puis réessaie."
+                } else {
+                    "Vérification impossible : ${cause.localizedMessage ?: "format illisible"}"
+                }
+                return
+            }
+
+            val durationUs = checkedDurationUs
+            if (durationUs == null || durationUs == C.TIME_UNSET || durationUs <= 0L) {
+                exportMessage = "Export impossible : la durée de cette vidéo est inconnue. Choisis une vidéo avec une durée détectable."
+                return
+            }
+            val trackGroups = checkedTrackGroups
+            val hasVideoTrack = trackGroups != null &&
+                (0 until trackGroups.length).any { trackGroups.get(it).type == C.TRACK_TYPE_VIDEO }
+            if (!hasVideoTrack) {
+                exportMessage = "Export impossible : aucune piste vidéo n’a été détectée dans ce fichier."
+                return
+            }
+
+            val verifiedDurationMs = TimeUnit.MICROSECONDS.toMillis(durationUs)
+            durationMs = verifiedDurationMs
+            if ((range.endInclusive * verifiedDurationMs - range.start * verifiedDurationMs) < 500f) {
+                range = 0f..1f
+            }
+            exportMessage = "Vidéo vérifiée. Préparation de l’export…"
+            startExport(verifiedDurationMs)
+        }
+
+        val callbackExecutor = ContextCompat.getMainExecutor(context)
+        val durationFuture = Futures.withTimeout(
+            retriever.retrieveDurationUs(), 15, TimeUnit.SECONDS, metadataExecutor
+        )
+        val tracksFuture = Futures.withTimeout(
+            retriever.retrieveTrackGroups(), 15, TimeUnit.SECONDS, metadataExecutor
+        )
+        Futures.addCallback(durationFuture, object : FutureCallback<Long> {
+            override fun onSuccess(result: Long?) {
+                checkedDurationUs = result
+                finishMetadataCheck()
+            }
+
+            override fun onFailure(error: Throwable) {
+                checkError = error
+                finishMetadataCheck()
+            }
+        }, callbackExecutor)
+        Futures.addCallback(tracksFuture, object : FutureCallback<TrackGroupArray> {
+            override fun onSuccess(result: TrackGroupArray?) {
+                checkedTrackGroups = result
+                finishMetadataCheck()
+            }
+
+            override fun onFailure(error: Throwable) {
+                checkError = error
+                finishMetadataCheck()
+            }
+        }, callbackExecutor)
+    }
+
     fun cancelExport() {
         activeTransformer?.cancel()
         activeTransformer = null
@@ -343,7 +447,7 @@ fun EditorScreen() {
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        Button(enabled = !exportInProgress && !saveInProgress, onClick = {
+        Button(enabled = !exportInProgress && !saveInProgress && !metadataCheckInProgress, onClick = {
             picker.launch(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
             )
@@ -433,11 +537,15 @@ fun EditorScreen() {
 
                     Spacer(Modifier.height(12.dp))
                     Button(
-                        enabled = !exportInProgress && !saveInProgress && endS - startS >= 0.5f,
-                        onClick = ::startExport,
+                        enabled = !exportInProgress && !saveInProgress && !metadataCheckInProgress && endS - startS >= 0.5f,
+                        onClick = ::validateVideoAndStartExport,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (exportInProgress) "Export en cours…" else "Exporter la vidéo")
+                        Text(when {
+                            metadataCheckInProgress -> "Vérification…"
+                            exportInProgress -> "Export en cours…"
+                            else -> "Vérifier et exporter"
+                        })
                     }
                     if (exportInProgress) {
                         Spacer(Modifier.height(8.dp))
@@ -507,6 +615,18 @@ fun EditorScreen() {
                         }
                     }
                 }
+            }
+        } else {
+            Button(
+                enabled = !exportInProgress && !saveInProgress && !metadataCheckInProgress,
+                onClick = ::validateVideoAndStartExport,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (metadataCheckInProgress) "Vérification…" else "Vérifier la vidéo")
+            }
+            exportMessage?.let { message ->
+                Spacer(Modifier.height(8.dp))
+                Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

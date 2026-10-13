@@ -38,6 +38,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -47,6 +52,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -81,6 +87,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.inspector.MetadataRetriever
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
@@ -592,6 +599,9 @@ class MainActivity : ComponentActivity() {
             var qualityMenuExpanded by remember { mutableStateOf(false) }
             var audioMenuExpanded by remember { mutableStateOf(false) }
             var textMenuExpanded by remember { mutableStateOf(false) }
+            var playbackOptionsExpanded by remember { mutableStateOf(false) }
+            var playlistExpanded by remember { mutableStateOf(false) }
+            var examplesExpanded by remember { mutableStateOf(false) }
             MediaPlayerTheme {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -629,7 +639,14 @@ class MainActivity : ComponentActivity() {
                                     selected = tab == index,
                                     onClick = { tab = index },
                                     icon = {
-                                        Text(listOf("▶", "✂", "●")[index])
+                                        Icon(
+                                            imageVector = listOf(
+                                                Icons.Filled.PlayArrow,
+                                                Icons.Filled.Menu,
+                                                Icons.Filled.Settings
+                                            )[index],
+                                            contentDescription = null
+                                        )
                                     },
                                     label = { Text(label) }
                                 )
@@ -646,7 +663,7 @@ class MainActivity : ComponentActivity() {
                     0 -> {
                         AndroidView(
                             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                            factory = { context -> PlayerView(context) },
+                            factory = { context -> PlayerView(context).apply { useController = false } },
                             update = { view -> view.player = player }
                         )
                         LazyColumn(modifier = Modifier.weight(1f)) {
@@ -728,17 +745,74 @@ class MainActivity : ComponentActivity() {
                                     }
                                 if (castCanReachEntirePlaylist) {
                                     MediaRouteButton(state = rememberMediaRouteButtonState())
-                                } else if (playlistItems.any { item ->
-                                        item.localConfiguration?.uri?.scheme !in setOf("http", "https")
-                                    }) {
-                                    Text(
-                                        "Cast indisponible : la playlist contient un fichier local",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
                                 }
                             }
                         }
                         if (player != null) PlaybackProgress(player)
+                        val showPlayButton = player?.let { Util.shouldShowPlayButton(it) } ?: true
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                enabled = canSkipPrevious,
+                                onClick = { player?.seekToPreviousMediaItem() }
+                            ) {
+                                Icon(Icons.Filled.ArrowBack, contentDescription = "Précédent")
+                            }
+                            FilledTonalButton(
+                                enabled = player != null,
+                                onClick = { player?.let { Util.handlePlayPauseButtonAction(it) } },
+                                shape = RoundedCornerShape(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.PlayArrow,
+                                    contentDescription = if (showPlayButton) "Lecture" else "Pause"
+                                )
+                            }
+                            IconButton(
+                                enabled = canSkipNext,
+                                onClick = { player?.seekToNextMediaItem() }
+                            ) {
+                                Icon(Icons.Filled.ArrowForward, contentDescription = "Suivant")
+                            }
+                        }
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .clickable { playbackOptionsExpanded = !playbackOptionsExpanded },
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Commandes", style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        "Qualité, pistes audio et répétition",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    if (playbackOptionsExpanded) "Masquer" else "Options",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+                        if (playbackOptionsExpanded) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -876,24 +950,6 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedButton(
-                                enabled = canSkipPrevious,
-                                onClick = { player?.seekToPreviousMediaItem() }
-                            ) {
-                                Text("← Précédent")
-                            }
-                            OutlinedButton(
-                                enabled = canSkipNext,
-                                onClick = { player?.seekToNextMediaItem() }
-                            ) {
-                                Text("Suivant →")
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
                             FilledTonalButton(
                                 enabled = canSetShuffleMode,
                                 onClick = {
@@ -938,16 +994,43 @@ class MainActivity : ComponentActivity() {
                             Spacer(Modifier.width(8.dp))
                             Text(if (isFavorite) "Retirer des favoris" else "Ajouter aux favoris")
                         }
+                        }
+                        }
                                 }
                             }
                             item {
-                                Text(
-                                    "Playlist (${playlistItems.size})",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                )
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                        .clickable { playlistExpanded = !playlistExpanded },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    ),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("File d’attente", style = MaterialTheme.typography.titleSmall)
+                                            Text(
+                                                "${playlistItems.size} média(s)",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            if (playlistExpanded) "Masquer" else "Afficher",
+                                            color = MaterialTheme.colorScheme.primary,
+                                            style = MaterialTheme.typography.labelLarge
+                                        )
+                                    }
+                                }
                             }
+                            if (playlistExpanded) {
                             itemsIndexed(playlistItems) { index, item ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -1007,14 +1090,40 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item {
-                                Text(
-                                    "Ajouter à la playlist",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                )
                             }
+                            item {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                        .clickable { examplesExpanded = !examplesExpanded },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    ),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Exemples de lecture", style = MaterialTheme.typography.titleSmall)
+                                            Text(
+                                                "Vidéos, audio et flux en direct",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            if (examplesExpanded) "Masquer" else "Explorer",
+                                            color = MaterialTheme.colorScheme.primary,
+                                            style = MaterialTheme.typography.labelLarge
+                                        )
+                                    }
+                                }
+                            }
+                            if (examplesExpanded) {
                             items(tracks) { track ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -1076,6 +1185,7 @@ class MainActivity : ComponentActivity() {
                                         modifier = Modifier.padding(horizontal = 16.dp)
                                     )
                                 }
+                            }
                             }
                         }
                         if (metadataDialogVisible) {
