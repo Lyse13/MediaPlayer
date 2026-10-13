@@ -353,8 +353,8 @@ fun EditorScreen() {
 
             val error = checkError
             if (error != null) {
-                var cause = error
-                while (cause.cause != null && cause.cause !== cause) cause = cause.cause!!
+                var cause: Throwable = error
+                while (cause.cause?.let { it !== cause } == true) cause = cause.cause!!
                 exportMessage = if (cause is TimeoutException) {
                     "Vérification trop longue. Vérifie que la vidéo est accessible, puis réessaie."
                 } else {
