@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +71,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
@@ -672,7 +678,33 @@ class MainActivity : ComponentActivity() {
                     0 -> {
                         PlayerSurface(
                             player = player,
-                            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(16f / 9f)
+                                .focusable()
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyUp) {
+                                        false
+                                    } else {
+                                        when (event.key) {
+                                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                                player?.let {
+                                                    Util.handlePlayPauseButtonAction(it)
+                                                    true
+                                                } ?: false
+                                            }
+                                            Key.DirectionLeft -> {
+                                                player?.seekBack()
+                                                player != null
+                                            }
+                                            Key.DirectionRight -> {
+                                                player?.seekForward()
+                                                player != null
+                                            }
+                                            else -> false
+                                        }
+                                    }
+                                },
                         )
                         LazyColumn(modifier = Modifier.weight(1f)) {
                             item {
