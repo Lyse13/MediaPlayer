@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -32,10 +33,13 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -95,6 +99,8 @@ import com.google.common.util.concurrent.FutureCallback
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.Executors
 
 
@@ -105,10 +111,19 @@ private const val HLS_VOD_URL =
 private const val HLS_LIVE_URL =
     "https://live-hls-apps-aje-fa.getaj.net/AJE/index.m3u8"
 private const val MAX_METADATA_FORMATS_PER_GROUP = 4
+private const val METADATA_REQUEST_TIMEOUT_SECONDS = 15L
 data class Track(
     val title: String,
     val url: String,
     val mimeType: String? = null
+)
+
+private data class MediaInfoDialogState(
+    val title: String,
+    val duration: String? = null,
+    val tracks: String? = null,
+    val durationError: String? = null,
+    val tracksError: String? = null
 )
 
 private enum class VideoQuality(val label: String) {
@@ -165,8 +180,10 @@ class MainActivity : ComponentActivity() {
     private var audioTrackChoices by mutableStateOf<List<TrackChoice>>(emptyList())
     private var textTrackChoices by mutableStateOf<List<TrackChoice>>(emptyList())
     private var subtitlesDisabled by mutableStateOf(false)
-    private var metadataMessage by mutableStateOf<String?>(null)
+    private var metadataInfoState by mutableStateOf<MediaInfoDialogState?>(null)
+    private var metadataDialogVisible by mutableStateOf(false)
     private var metadataRequestId = 0
+    private val metadataTimeoutExecutor = Executors.newSingleThreadScheduledExecutor()
     private var downloads by mutableStateOf<Map<String, Download>>(emptyMap())
     private var downloadManager: DownloadManager? = null
     private val downloadLookupExecutor = Executors.newSingleThreadExecutor()
@@ -206,46 +223,96 @@ class MainActivity : ComponentActivity() {
     @OptIn(UnstableApi::class)
     private fun inspectMetadata(track: Track) {
         val requestId = ++metadataRequestId
+        metadataDialogVisible = true
+        metadataInfoState = MediaInfoDialogState(track.title)
         val retriever = try {
             MetadataRetriever.Builder(this, createMediaItem(track)).build()
         } catch (exception: Exception) {
-            metadataMessage = "Analyse impossible : ${exception.localizedMessage ?: "erreur inconnue"}"
+            metadataInfoState = metadataInfoState?.copy(
+                durationError = "Analyse impossible : ${exception.localizedMessage ?: "erreur inconnue"}",
+                tracksError = "Analyse impossible : ${exception.localizedMessage ?: "erreur inconnue"}"
+            )
             return
         }
-        metadataMessage = "Analyse de « ${track.title} » sans démarrer la lecture…"
 
-        val trackGroupsFuture = retriever.retrieveTrackGroups()
-        val durationFuture = retriever.retrieveDurationUs()
-        val metadataFuture = Futures.allAsList(trackGroupsFuture, durationFuture)
+        val pendingResults = AtomicInteger(2)
+        fun closeRetrieverWhenFinished() {
+            if (pendingResults.decrementAndGet() == 0) retriever.close()
+        }
+
+        val trackGroupsFuture = Futures.withTimeout(
+            retriever.retrieveTrackGroups(),
+            METADATA_REQUEST_TIMEOUT_SECONDS,
+            TimeUnit.SECONDS,
+            metadataTimeoutExecutor
+        )
+        val durationFuture = Futures.withTimeout(
+            retriever.retrieveDurationUs(),
+            METADATA_REQUEST_TIMEOUT_SECONDS,
+            TimeUnit.SECONDS,
+            metadataTimeoutExecutor
+        )
         Futures.addCallback(
-            metadataFuture,
-            object : FutureCallback<List<Any>> {
-                override fun onSuccess(result: List<Any>?) {
-                    retriever.close()
-                    if (requestId != metadataRequestId || result == null) return
-                    val trackGroups = result[0] as TrackGroupArray
-                    val durationUs = result[1] as Long
-                    val duration = if (durationUs == C.TIME_UNSET) {
-                        "durée inconnue"
-                    } else {
-                        formatMetadataDuration(TimeUnit.MICROSECONDS.toMillis(durationUs))
+            trackGroupsFuture,
+            object : FutureCallback<TrackGroupArray> {
+                override fun onSuccess(trackGroups: TrackGroupArray?) {
+                    if (requestId == metadataRequestId && !isDestroyed && trackGroups != null) {
+                        metadataInfoState = metadataInfoState?.copy(
+                            tracks = formatMetadataTrackDetails(trackGroups)
+                        )
                     }
-                    metadataMessage = buildString {
-                        appendLine(track.title)
-                        appendLine("Durée : $duration")
-                        append(formatMetadataTrackDetails(trackGroups))
-                    }.trimEnd()
+                    closeRetrieverWhenFinished()
                 }
 
                 override fun onFailure(error: Throwable) {
-                    retriever.close()
-                    if (requestId == metadataRequestId) {
-                        metadataMessage = "Analyse impossible : ${error.localizedMessage ?: "média inaccessible"}"
+                    if (requestId == metadataRequestId && !isDestroyed) {
+                        metadataInfoState = metadataInfoState?.copy(
+                            tracksError = formatMetadataFailure(error)
+                        )
                     }
+                    closeRetrieverWhenFinished()
                 }
             },
             ContextCompat.getMainExecutor(this)
         )
+
+        Futures.addCallback(
+            durationFuture,
+            object : FutureCallback<Long> {
+                override fun onSuccess(durationUs: Long?) {
+                    if (requestId == metadataRequestId && !isDestroyed && durationUs != null) {
+                        metadataInfoState = metadataInfoState?.copy(
+                            duration = if (durationUs == C.TIME_UNSET) {
+                                "durée inconnue (flux en direct ou durée non fournie)"
+                            } else {
+                                formatMetadataDuration(TimeUnit.MICROSECONDS.toMillis(durationUs))
+                            }
+                        )
+                    }
+                    closeRetrieverWhenFinished()
+                }
+
+                override fun onFailure(error: Throwable) {
+                    if (requestId == metadataRequestId && !isDestroyed) {
+                        metadataInfoState = metadataInfoState?.copy(
+                            durationError = formatMetadataFailure(error)
+                        )
+                    }
+                    closeRetrieverWhenFinished()
+                }
+            },
+            ContextCompat.getMainExecutor(this)
+        )
+    }
+
+    private fun formatMetadataFailure(error: Throwable): String {
+        var cause = error
+        while (cause.cause != null && cause.cause !== cause) cause = cause.cause!!
+        return if (cause is TimeoutException) {
+            "Délai dépassé après ${METADATA_REQUEST_TIMEOUT_SECONDS} s. Vérifie la connexion ou réessaie."
+        } else {
+            "Analyse impossible : ${cause.localizedMessage ?: "média inaccessible"}"
+        }
     }
 
     private fun formatMetadataTrackDetails(trackGroups: TrackGroupArray): String {
@@ -948,14 +1015,6 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                                 )
                             }
-                            metadataMessage?.let { message ->
-                                item {
-                                    Text(
-                                        message,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                    )
-                                }
-                            }
                             items(tracks) { track ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -1018,6 +1077,34 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                             }
+                        }
+                        if (metadataDialogVisible) {
+                            AlertDialog(
+                                onDismissRequest = { metadataDialogVisible = false },
+                                title = { Text("Informations du média") },
+                                text = {
+                                    val info = metadataInfoState
+                                    Column(
+                                        modifier = Modifier
+                                            .heightIn(max = 400.dp)
+                                            .verticalScroll(rememberScrollState()),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Text(info?.title.orEmpty(), style = MaterialTheme.typography.titleSmall)
+                                        Text("Durée : ${info?.duration ?: info?.durationError ?: "Analyse en cours…"}")
+                                        Text(
+                                            info?.tracks
+                                                ?: info?.tracksError
+                                                ?: "Analyse des pistes en cours…"
+                                        )
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = { metadataDialogVisible = false }) {
+                                        Text("Fermer")
+                                    }
+                                }
+                            )
                         }
                     }
                     1 -> {
@@ -1111,6 +1198,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         downloadLookupExecutor.shutdown()
+        metadataTimeoutExecutor.shutdownNow()
         super.onDestroy()
     }
 }
