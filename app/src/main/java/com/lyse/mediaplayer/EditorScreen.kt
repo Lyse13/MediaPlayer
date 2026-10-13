@@ -1,5 +1,6 @@
 package com.lyse.mediaplayer
 
+import android.graphics.Bitmap
 import android.net.Uri
 import android.content.Intent
 import android.content.ClipData
@@ -9,16 +10,21 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,6 +45,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -50,6 +61,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.inspector.MetadataRetriever
+import androidx.media3.inspector.frame.FrameExtractor
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.TrackGroupArray
 import androidx.media3.effect.Crop
 import androidx.media3.effect.ScaleAndRotateTransformation
@@ -74,6 +87,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.min
+
+private const val TIMELINE_FRAME_COUNT = 8
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
@@ -92,12 +108,58 @@ fun EditorScreen() {
     var exportMessage by remember { mutableStateOf<String?>(null) }
     var metadataCheckInProgress by remember { mutableStateOf(false) }
     var metadataCheckId by remember { mutableIntStateOf(0) }
+    var timelineFrames by remember { mutableStateOf<List<Bitmap?>>(emptyList()) }
+    var timelineFramesLoading by remember { mutableStateOf(false) }
+    var timelineFramesFailed by remember { mutableStateOf(false) }
+    var timelineFramesRequestId by remember { mutableIntStateOf(0) }
+    var isEditorDisposed by remember { mutableStateOf(false) }
+    val frameExtractorExecutor = remember { Executors.newSingleThreadExecutor() }
     var exportedFile by remember { mutableStateOf<File?>(null) }
     var exportedUri by remember { mutableStateOf<Uri?>(null) }
     var inProgressFile by remember { mutableStateOf<File?>(null) }
     var pendingSaveFile by remember { mutableStateOf<File?>(null) }
     var saveInProgress by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+
+    fun extractTimelineFrames(uri: Uri, videoDurationMs: Long) {
+        val requestId = ++timelineFramesRequestId
+        timelineFrames = List(TIMELINE_FRAME_COUNT) { null }
+        timelineFramesLoading = true
+        timelineFramesFailed = false
+        frameExtractorExecutor.execute {
+            var extractor: FrameExtractor? = null
+            val frames = MutableList<Bitmap?>(TIMELINE_FRAME_COUNT) { null }
+            var failed = false
+            try {
+                extractor = FrameExtractor.Builder(context, MediaItem.fromUri(uri))
+                    .setSeekParameters(SeekParameters.CLOSEST_SYNC)
+                    .build()
+                for (index in 0 until TIMELINE_FRAME_COUNT) {
+                    val positionMs = ((index + 0.5) / TIMELINE_FRAME_COUNT * videoDurationMs).toLong()
+                    val source = extractor.getFrame(positionMs).get().bitmap
+                    val scale = min(160f / source.width, 90f / source.height).coerceAtMost(1f)
+                    val width = (source.width * scale).toInt().coerceAtLeast(1)
+                    val height = (source.height * scale).toInt().coerceAtLeast(1)
+                    frames[index] = if (width == source.width && height == source.height) {
+                        source
+                    } else {
+                        Bitmap.createScaledBitmap(source, width, height, true)
+                    }
+                }
+            } catch (_: Exception) {
+                failed = true
+            } finally {
+                extractor?.close()
+            }
+            ContextCompat.getMainExecutor(context).execute {
+                if (requestId == timelineFramesRequestId && videoUri == uri && !isEditorDisposed) {
+                    timelineFrames = frames
+                    timelineFramesFailed = failed
+                    timelineFramesLoading = false
+                }
+            }
+        }
+    }
 
     val player = remember {
         ExoPlayer.Builder(context)
@@ -122,6 +184,9 @@ fun EditorScreen() {
                 activeTransformer?.cancel()
                 inProgressFile?.delete()
             }
+            isEditorDisposed = true
+            timelineFramesRequestId++
+            frameExtractorExecutor.shutdownNow()
             player.release()
             metadataExecutor.shutdownNow()
         }
@@ -441,6 +506,18 @@ fun EditorScreen() {
         }
     }
 
+    LaunchedEffect(videoUri, durationMs) {
+        val uri = videoUri
+        if (uri != null && durationMs > 0L) {
+            extractTimelineFrames(uri, durationMs)
+        } else {
+            timelineFramesRequestId++
+            timelineFrames = emptyList()
+            timelineFramesLoading = false
+            timelineFramesFailed = false
+        }
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -497,6 +574,59 @@ fun EditorScreen() {
                         ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Repères de la vidéo", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(76.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    ) {
+                        Row(Modifier.fillMaxSize()) {
+                            timelineFrames.forEachIndexed { index, bitmap ->
+                                Box(Modifier.weight(1f).fillMaxHeight()) {
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = "Image ${index + 1} de la vidéo",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        androidx.compose.material3.Surface(
+                                            modifier = Modifier.fillMaxSize().padding(horizontal = 1.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant
+                                        ) {}
+                                    }
+                                }
+                            }
+                        }
+                        Canvas(Modifier.fillMaxSize()) {
+                            val selectionStart = range.start * size.width
+                            val selectionEnd = range.endInclusive * size.width
+                            drawRect(
+                                color = Color.Black.copy(alpha = 0.5f),
+                                size = androidx.compose.ui.geometry.Size(selectionStart, size.height)
+                            )
+                            drawRect(
+                                color = Color.Black.copy(alpha = 0.5f),
+                                topLeft = Offset(selectionEnd, 0f),
+                                size = androidx.compose.ui.geometry.Size(size.width - selectionEnd, size.height)
+                            )
+                            drawLine(Color.White, Offset(selectionStart, 0f), Offset(selectionStart, size.height), 3.dp.toPx())
+                            drawLine(Color.White, Offset(selectionEnd, 0f), Offset(selectionEnd, size.height), 3.dp.toPx())
+                        }
+                    }
+                    if (timelineFramesLoading || timelineFramesFailed) {
+                        Text(
+                            if (timelineFramesLoading) "Chargement des vignettes…"
+                            else "Vignettes indisponibles pour cette vidéo.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
                     RangeSlider(
                         value = range,
                         enabled = !exportInProgress && !saveInProgress,

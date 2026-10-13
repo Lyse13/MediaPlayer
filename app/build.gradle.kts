@@ -53,6 +53,7 @@ dependencies {
     implementation("androidx.media3:media3-datasource:1.11.1")
     implementation("androidx.media3:media3-database:1.11.1")
     implementation("androidx.media3:media3-inspector:1.11.1")
+    implementation("androidx.media3:media3-inspector-frame:1.11.1")
     implementation("androidx.media3:media3-transformer:1.11.1")
     implementation("androidx.media3:media3-effect:1.11.1")
     implementation("androidx.camera:camera-camera2:1.6.2")
