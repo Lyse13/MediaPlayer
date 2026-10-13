@@ -1,10 +1,12 @@
 package com.lyse.mediaplayer
 
+import android.app.Activity
 import android.graphics.Bitmap
 import android.net.Uri
 import android.content.Intent
 import android.content.ClipData
 import android.os.Build
+import android.view.WindowManager
 import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -43,6 +45,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,7 +55,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Effect
@@ -67,7 +69,7 @@ import androidx.media3.exoplayer.source.TrackGroupArray
 import androidx.media3.effect.Crop
 import androidx.media3.effect.ScaleAndRotateTransformation
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
+import androidx.media3.ui.compose.PlayerSurface
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
@@ -119,6 +121,7 @@ fun EditorScreen() {
     var inProgressFile by remember { mutableStateOf<File?>(null) }
     var pendingSaveFile by remember { mutableStateOf<File?>(null) }
     var saveInProgress by remember { mutableStateOf(false) }
+    var previewIsPlaying by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     fun extractTimelineFrames(uri: Uri, videoDurationMs: Long) {
@@ -167,6 +170,10 @@ fun EditorScreen() {
             .build()
             .also { exo ->
                 exo.addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        previewIsPlaying = isPlaying
+                    }
+
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_READY &&
                             durationMs == 0L &&
@@ -187,8 +194,21 @@ fun EditorScreen() {
             isEditorDisposed = true
             timelineFramesRequestId++
             frameExtractorExecutor.shutdownNow()
+            previewIsPlaying = false
+            (context as? Activity)?.window?.clearFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
             player.release()
             metadataExecutor.shutdownNow()
+        }
+    }
+
+    SideEffect {
+        val window = (context as? Activity)?.window ?: return@SideEffect
+        if (previewIsPlaying) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
@@ -550,9 +570,9 @@ fun EditorScreen() {
             return@Column
         }
 
-        AndroidView(
-            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-            factory = { ctx -> PlayerView(ctx).also { it.player = player } }
+        PlayerSurface(
+            player = player,
+            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
         )
 
         if (durationMs > 0) {

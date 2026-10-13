@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -67,11 +68,11 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.lyse.mediaplayer.ui.theme.MediaPlayerTheme
 import androidx.media3.common.MediaItem
@@ -98,7 +99,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionToken
-import androidx.media3.ui.PlayerView
+import androidx.media3.ui.compose.PlayerSurface
 import androidx.media3.cast.MediaRouteButton
 import androidx.media3.cast.rememberMediaRouteButtonState
 import androidx.media3.exoplayer.source.TrackGroupArray
@@ -603,6 +604,14 @@ class MainActivity : ComponentActivity() {
             var playlistExpanded by remember { mutableStateOf(false) }
             var examplesExpanded by remember { mutableStateOf(false) }
             MediaPlayerTheme {
+                SideEffect {
+                    val keepScreenOn = tab == 0 && isPlaying && hasVideoTracks
+                    if (keepScreenOn) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                }
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
@@ -661,10 +670,9 @@ class MainActivity : ComponentActivity() {
                     ) {
                         when (tab) {
                     0 -> {
-                        AndroidView(
+                        PlayerSurface(
+                            player = player,
                             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                            factory = { context -> PlayerView(context).apply { useController = false } },
-                            update = { view -> view.player = player }
                         )
                         LazyColumn(modifier = Modifier.weight(1f)) {
                             item {
@@ -1285,6 +1293,7 @@ class MainActivity : ComponentActivity() {
             player = controller
             playbackUiListener.onDeviceInfoChanged(controller.deviceInfo)
             updatePlaylistState(controller)
+            updateTrackChoices(controller.currentTracks)
             playbackState = controller.playbackState
             isPlaying = controller.isPlaying
             audioOnly = C.TRACK_TYPE_VIDEO in
@@ -1297,6 +1306,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         downloadManager?.removeListener(downloadManagerListener)
         downloadManager = null
         player?.removeListener(playbackUiListener)
