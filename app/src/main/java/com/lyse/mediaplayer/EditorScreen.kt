@@ -1,6 +1,9 @@
 package com.lyse.mediaplayer
 
 import android.net.Uri
+import android.content.Intent
+import android.content.ClipData
+import android.os.Build
 import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -26,6 +29,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +62,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Composition
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 
@@ -76,7 +81,11 @@ fun EditorScreen() {
     var exportProgress by remember { mutableIntStateOf(0) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
     var exportedFile by remember { mutableStateOf<File?>(null) }
+    var exportedUri by remember { mutableStateOf<Uri?>(null) }
     var inProgressFile by remember { mutableStateOf<File?>(null) }
+    var pendingSaveFile by remember { mutableStateOf<File?>(null) }
+    var saveInProgress by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     val player = remember {
         ExoPlayer.Builder(context)
@@ -120,6 +129,77 @@ fun EditorScreen() {
         }
     }
 
+    fun saveUsingMediaStore(source: File) {
+        saveInProgress = true
+        exportMessage = "Enregistrement dans Films…"
+        coroutineScope.launch {
+            try {
+                val uri = saveVideoToMovies(context, source)
+                exportedUri = uri
+                exportedFile = null
+                source.delete()
+                exportMessage = "Vidéo enregistrée dans Films/MediaPlayer."
+            } catch (exception: Exception) {
+                exportMessage = "Enregistrement impossible : ${exception.localizedMessage ?: "erreur inconnue"}"
+            } finally {
+                saveInProgress = false
+            }
+        }
+    }
+
+    val documentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("video/mp4")
+    ) { destination ->
+        val source = pendingSaveFile
+        pendingSaveFile = null
+        if (destination == null || source == null) {
+            saveInProgress = false
+            exportMessage = "Choix de l’emplacement annulé. La copie temporaire reste disponible."
+        } else {
+            coroutineScope.launch {
+                try {
+                    copyVideoToDocument(context, source, destination)
+                    exportedUri = destination
+                    exportedFile = null
+                    source.delete()
+                    exportMessage = "Vidéo enregistrée à l’emplacement choisi."
+                } catch (exception: Exception) {
+                    exportMessage = "Enregistrement impossible : ${exception.localizedMessage ?: "erreur inconnue"}"
+                } finally {
+                    saveInProgress = false
+                }
+            }
+        }
+    }
+
+    fun saveExport(source: File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            saveUsingMediaStore(source)
+        } else {
+            pendingSaveFile = source
+            saveInProgress = true
+            exportMessage = "Choisissez où enregistrer la vidéo…"
+            documentPicker.launch("MediaPlayer-${System.currentTimeMillis()}.mp4")
+        }
+    }
+
+    fun playExport(uri: Uri) {
+        player.setVideoEffects(emptyList())
+        player.setMediaItem(MediaItem.fromUri(uri))
+        player.prepare()
+        player.play()
+    }
+
+    fun shareExport(uri: Uri) {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "video/mp4"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(context.contentResolver, "Vidéo exportée", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(sendIntent, "Partager la vidéo"))
+    }
+
     fun applyEdits(
         rotationEnabled: Boolean = rotate,
         cropEnabled: Boolean = crop,
@@ -161,6 +241,7 @@ fun EditorScreen() {
 
         exportedFile?.delete()
         exportedFile = null
+        exportedUri = null
         exportProgress = 0
         exportMessage = null
         val outputFile = File(context.cacheDir, "editor-export-${System.currentTimeMillis()}.mp4")
@@ -195,9 +276,11 @@ fun EditorScreen() {
                     activeTransformer = null
                     inProgressFile = null
                     exportedFile = outputFile
+                    exportedUri = null
                     exportProgress = 100
                     exportInProgress = false
-                    exportMessage = "Export terminé. Le fichier est temporairement dans le cache de l’application."
+                    exportMessage = "Export terminé. Enregistrement de la vidéo…"
+                    saveExport(outputFile)
                 }
 
                 override fun onError(
@@ -260,7 +343,7 @@ fun EditorScreen() {
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        Button(enabled = !exportInProgress, onClick = {
+        Button(enabled = !exportInProgress && !saveInProgress, onClick = {
             picker.launch(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
             )
@@ -312,7 +395,7 @@ fun EditorScreen() {
                     )
                     RangeSlider(
                         value = range,
-                        enabled = !exportInProgress,
+                        enabled = !exportInProgress && !saveInProgress,
                         onValueChange = { range = it },
                         onValueChangeFinished = { applyEdits() }
                     )
@@ -325,7 +408,7 @@ fun EditorScreen() {
                         Text("Rotation 90°")
                         Switch(
                             checked = rotate,
-                            enabled = !exportInProgress,
+                            enabled = !exportInProgress && !saveInProgress,
                             onCheckedChange = {
                                 rotate = it
                                 applyEdits(rotationEnabled = it)
@@ -340,7 +423,7 @@ fun EditorScreen() {
                         Text("Recadrage centré")
                         Switch(
                             checked = crop,
-                            enabled = !exportInProgress,
+                            enabled = !exportInProgress && !saveInProgress,
                             onCheckedChange = {
                                 crop = it
                                 applyEdits(cropEnabled = it)
@@ -350,7 +433,7 @@ fun EditorScreen() {
 
                     Spacer(Modifier.height(12.dp))
                     Button(
-                        enabled = !exportInProgress && endS - startS >= 0.5f,
+                        enabled = !exportInProgress && !saveInProgress && endS - startS >= 0.5f,
                         onClick = ::startExport,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -377,22 +460,50 @@ fun EditorScreen() {
                             Text("Annuler l’export")
                         }
                     }
-                    exportMessage?.let { message ->
+                    if (saveInProgress) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.padding(end = 8.dp))
+                            Text(exportMessage ?: "Enregistrement…")
+                        }
+                    }
+                    exportMessage?.takeUnless { saveInProgress }?.let { message ->
                         Spacer(Modifier.height(8.dp))
                         Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     exportedFile?.let { file ->
                         OutlinedButton(
-                            enabled = !exportInProgress,
+                            enabled = !exportInProgress && !saveInProgress,
                             modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                player.setVideoEffects(emptyList())
-                                player.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
-                                player.prepare()
-                                player.play()
-                            }
+                            onClick = { saveExport(file) }
                         ) {
-                            Text("Lire le résultat exporté")
+                            Text("Réessayer l’enregistrement")
+                        }
+                        OutlinedButton(
+                            enabled = !saveInProgress,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { playExport(Uri.fromFile(file)) }
+                        ) {
+                            Text("Lire la copie temporaire")
+                        }
+                    }
+                    exportedUri?.let { uri ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                modifier = Modifier.weight(1f),
+                                onClick = { playExport(uri) }
+                            ) {
+                                Text("Lire")
+                            }
+                            OutlinedButton(
+                                modifier = Modifier.weight(1f),
+                                onClick = { shareExport(uri) }
+                            ) {
+                                Text("Partager")
+                            }
                         }
                     }
                 }
