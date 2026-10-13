@@ -70,6 +70,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.C
+import androidx.media3.common.DeviceInfo
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.TrackSelectionParameters
@@ -86,6 +87,8 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
+import androidx.media3.cast.MediaRouteButton
+import androidx.media3.cast.rememberMediaRouteButtonState
 import androidx.media3.exoplayer.source.TrackGroupArray
 import com.google.common.util.concurrent.FutureCallback
 import com.google.common.util.concurrent.Futures
@@ -144,6 +147,7 @@ class MainActivity : ComponentActivity() {
     private var playbackState by mutableIntStateOf(Player.STATE_IDLE)
     private var isPlaying by mutableStateOf(false)
     private var playbackError by mutableStateOf<String?>(null)
+    private var outputName by mutableStateOf("Ce téléphone")
     private var playlistItems by mutableStateOf<List<MediaItem>>(emptyList())
     private var canChangePlaylist by mutableStateOf(false)
     private var canSkipPrevious by mutableStateOf(false)
@@ -193,7 +197,6 @@ class MainActivity : ComponentActivity() {
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(track.title)
-                    .setArtworkUri(Uri.parse("android.resource://$packageName/${R.drawable.sample_image}"))
                     .build()
             )
             .build()
@@ -386,6 +389,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private val playbackUiListener = object : Player.Listener {
+        override fun onDeviceInfoChanged(deviceInfo: DeviceInfo) {
+            outputName = if (deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) {
+                "Récepteur Cast"
+            } else "Ce téléphone"
+        }
+
         override fun onPlaybackStateChanged(playbackState: Int) {
             this@MainActivity.playbackState = playbackState
         }
@@ -443,6 +452,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Resolve the manifest options provider before Compose can create its route button.
+        com.google.android.gms.cast.framework.CastContext.getSharedInstance(this)
         if (Build.VERSION.SDK_INT >= 33) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -560,6 +571,7 @@ class MainActivity : ComponentActivity() {
                                             MaterialTheme.colorScheme.primary
                                         }
                                     )
+                                    Text(outputName, style = MaterialTheme.typography.bodySmall)
                                     playbackError?.let { message ->
                                         Text(
                                             message,
@@ -579,6 +591,20 @@ class MainActivity : ComponentActivity() {
                                     ) {
                                         Text("Réessayer")
                                     }
+                                }
+                                val castCanReachEntirePlaylist = playlistItems.isNotEmpty() &&
+                                    playlistItems.all { item ->
+                                        item.localConfiguration?.uri?.scheme in setOf("http", "https")
+                                    }
+                                if (castCanReachEntirePlaylist) {
+                                    MediaRouteButton(state = rememberMediaRouteButtonState())
+                                } else if (playlistItems.any { item ->
+                                        item.localConfiguration?.uri?.scheme !in setOf("http", "https")
+                                    }) {
+                                    Text(
+                                        "Cast indisponible : la playlist contient un fichier local",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
                                 }
                             }
                         }
@@ -987,13 +1013,17 @@ class MainActivity : ComponentActivity() {
             }
 
             if (controller.mediaItemCount == 0) {
-                val items = tracks.map(::createMediaItem)
+                // A receiver must be able to fetch every item in the transferred queue.
+                val items = tracks
+                    .filter { Uri.parse(it.url).scheme in setOf("http", "https") }
+                    .map(::createMediaItem)
                 controller.setMediaItems(items)
                 controller.prepare()
                 controller.play()
             }
             controller.addListener(playbackUiListener)
             player = controller
+            playbackUiListener.onDeviceInfoChanged(controller.deviceInfo)
             updatePlaylistState(controller)
             playbackState = controller.playbackState
             isPlaying = controller.isPlaying

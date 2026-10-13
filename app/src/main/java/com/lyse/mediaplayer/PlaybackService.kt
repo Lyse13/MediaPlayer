@@ -16,6 +16,8 @@ import androidx.media3.exoplayer.analytics.PlaybackStatsListener
 import androidx.media3.exoplayer.util.EventLogger
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.cast.CastPlayer
+import com.google.android.gms.cast.framework.CastContext
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
@@ -61,6 +63,7 @@ class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
     private var mediaCache: SimpleCache? = null
+    private var castPlayer: CastPlayer? = null
     private val playbackListener = createPlaybackListener()
 
     private val favorites = mutableSetOf<String>()
@@ -142,6 +145,8 @@ class PlaybackService : MediaSessionService() {
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+        // Resolve the manifest OptionsProvider before creating Cast UI or a CastPlayer.
+        CastContext.getSharedInstance(this)
         val cache = SimpleCache(
             File(cacheDir, "media3_playback_cache"),
             LeastRecentlyUsedCacheEvictor(250L * 1024 * 1024),
@@ -182,7 +187,8 @@ class PlaybackService : MediaSessionService() {
                 })
             }
 
-        mediaSession = MediaSession.Builder(this, player)
+        castPlayer = CastPlayer.Builder(this).setLocalPlayer(player).build()
+        mediaSession = MediaSession.Builder(this, castPlayer!!)
             .setCallback(SessionCallback())
             .setMediaButtonPreferences(ImmutableList.of(favoriteButton(false), skipForward))
             .build()
@@ -198,6 +204,7 @@ class PlaybackService : MediaSessionService() {
             release()
             mediaSession = null
         }
+        castPlayer = null
         mediaCache?.release()
         mediaCache = null
         super.onDestroy()
