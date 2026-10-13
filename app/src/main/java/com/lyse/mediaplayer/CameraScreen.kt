@@ -10,10 +10,15 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.DynamicRange
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.TorchState
 import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.CameraController
@@ -32,6 +37,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -76,6 +83,11 @@ fun CameraScreen() {
     var hasAudio by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
     var useBackCamera by remember { mutableStateOf(true) }
     var flashMode by remember { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
+    var photoCaptureMode by remember {
+        mutableIntStateOf(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+    }
+    var videoQuality by remember { mutableStateOf(Quality.HD) }
+    var videoQualityMenuExpanded by remember { mutableStateOf(false) }
     var torchState by remember { mutableIntStateOf(TorchState.OFF) }
     var exposureIndex by remember { mutableIntStateOf(0) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -102,6 +114,13 @@ fun CameraScreen() {
     val controller = remember {
         LifecycleCameraController(context).apply {
             setEnabledUseCases(CameraController.IMAGE_CAPTURE or CameraController.VIDEO_CAPTURE)
+            setImageCaptureMode(photoCaptureMode)
+            setVideoCaptureQualitySelector(
+                QualitySelector.from(
+                    Quality.HD,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                )
+            )
         }
     }
 
@@ -109,6 +128,13 @@ fun CameraScreen() {
     val exposureState = cameraInfo?.exposureState
     val exposureRange = exposureState?.exposureCompensationRange
     val hasFlash = cameraInfo?.hasFlashUnit() == true
+    val supportedVideoQualities = remember(cameraInfo) {
+        cameraInfo?.let {
+            runCatching {
+                Recorder.getVideoCapabilities(it).getSupportedQualities(DynamicRange.SDR)
+            }.getOrDefault(emptyList())
+        }.orEmpty()
+    }
 
     DisposableEffect(controller, lifecycleOwner) {
         val torchObserver = Observer<Int> { state ->
@@ -120,6 +146,18 @@ fun CameraScreen() {
 
     LaunchedEffect(useBackCamera, torchState) {
         exposureIndex = controller.cameraInfo?.exposureState?.exposureCompensationIndex ?: 0
+    }
+
+    LaunchedEffect(useBackCamera, supportedVideoQualities) {
+        if (supportedVideoQualities.isNotEmpty() && videoQuality !in supportedVideoQualities) {
+            videoQuality = supportedVideoQualities.first()
+            controller.setVideoCaptureQualitySelector(
+                QualitySelector.from(
+                    videoQuality,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                )
+            )
+        }
     }
 
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
@@ -215,6 +253,62 @@ fun CameraScreen() {
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        OutlinedButton(
+                            enabled = !isRecording && supportedVideoQualities.isNotEmpty(),
+                            onClick = { videoQualityMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Vidéo : ${qualityLabel(videoQuality)}")
+                        }
+                        DropdownMenu(
+                            expanded = videoQualityMenuExpanded,
+                            onDismissRequest = { videoQualityMenuExpanded = false }
+                        ) {
+                            supportedVideoQualities.forEach { quality ->
+                                DropdownMenuItem(
+                                    text = { Text(qualityLabel(quality)) },
+                                    onClick = {
+                                        videoQuality = quality
+                                        controller.setVideoCaptureQualitySelector(
+                                            QualitySelector.from(
+                                                quality,
+                                                FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                                            )
+                                        )
+                                        videoQualityMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    OutlinedButton(
+                        enabled = !isRecording,
+                        onClick = {
+                            photoCaptureMode = if (
+                                photoCaptureMode == ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                            ) {
+                                ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+                            } else {
+                                ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                            }
+                            controller.setImageCaptureMode(photoCaptureMode)
+                        }
+                    ) {
+                        Text(
+                            if (photoCaptureMode == ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY) {
+                                "Photo : qualité"
+                            } else {
+                                "Photo : rapide"
+                            }
+                        )
+                    }
+                }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -360,6 +454,14 @@ fun CameraScreen() {
             }
         }
     }
+}
+
+private fun qualityLabel(quality: Quality): String = when (quality) {
+    Quality.UHD -> "4K · UHD"
+    Quality.FHD -> "1080p · FHD"
+    Quality.HD -> "720p · HD"
+    Quality.SD -> "480p · SD"
+    else -> "Auto"
 }
 
 @SuppressLint("MissingPermission")
