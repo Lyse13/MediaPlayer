@@ -91,6 +91,7 @@ fun CameraScreen() {
     var videoQuality by remember { mutableStateOf(Quality.HD) }
     var videoQualityMenuExpanded by remember { mutableStateOf(false) }
     var videoDynamicRange by remember { mutableStateOf(DynamicRange.SDR) }
+    var slowMotionMode by remember { mutableStateOf(false) }
     var torchState by remember { mutableIntStateOf(TorchState.OFF) }
     var exposureIndex by remember { mutableIntStateOf(0) }
     var zoomRatio by remember { mutableFloatStateOf(1f) }
@@ -223,11 +224,11 @@ fun CameraScreen() {
     }
 
     val currentRecording by rememberUpdatedState(recording)
-    DisposableEffect(hasCamera) {
-        if (hasCamera) controller.bindToLifecycle(lifecycleOwner)
+    DisposableEffect(hasCamera, slowMotionMode) {
+        if (hasCamera && !slowMotionMode) controller.bindToLifecycle(lifecycleOwner)
         onDispose {
             currentRecording?.stop()
-            controller.unbind()
+            if (!slowMotionMode) controller.unbind()
         }
     }
 
@@ -254,6 +255,11 @@ fun CameraScreen() {
                     }
                 }
             }
+            return@Column
+        }
+
+        if (slowMotionMode) {
+            SlowMotionCameraScreen(onExit = { slowMotionMode = false })
             return@Column
         }
 
@@ -356,6 +362,13 @@ fun CameraScreen() {
                             }
                         )
                     }
+                }
+                OutlinedButton(
+                    enabled = !isRecording && !analyzing,
+                    onClick = { slowMotionMode = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Mode ralenti haute fréquence")
                 }
                 if (supportedHdrDynamicRange != null) {
                     Row(
