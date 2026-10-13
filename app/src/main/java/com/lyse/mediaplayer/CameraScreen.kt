@@ -14,6 +14,7 @@ import androidx.camera.core.DynamicRange
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.TorchState
+import androidx.camera.core.ZoomState
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.Quality
@@ -50,6 +51,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -90,6 +92,9 @@ fun CameraScreen() {
     var videoQualityMenuExpanded by remember { mutableStateOf(false) }
     var torchState by remember { mutableIntStateOf(TorchState.OFF) }
     var exposureIndex by remember { mutableIntStateOf(0) }
+    var zoomRatio by remember { mutableFloatStateOf(1f) }
+    var minZoomRatio by remember { mutableFloatStateOf(1f) }
+    var maxZoomRatio by remember { mutableFloatStateOf(1f) }
     var status by remember { mutableStateOf<String?>(null) }
     var analyzing by remember { mutableStateOf(false) }
     var luma by remember { mutableDoubleStateOf(0.0) }
@@ -140,8 +145,19 @@ fun CameraScreen() {
         val torchObserver = Observer<Int> { state ->
             torchState = state ?: TorchState.OFF
         }
+        val zoomObserver = Observer<ZoomState> { state ->
+            state?.let {
+                zoomRatio = it.zoomRatio
+                minZoomRatio = it.minZoomRatio
+                maxZoomRatio = it.maxZoomRatio
+            }
+        }
         controller.torchState.observe(lifecycleOwner, torchObserver)
-        onDispose { controller.torchState.removeObserver(torchObserver) }
+        controller.zoomState.observe(lifecycleOwner, zoomObserver)
+        onDispose {
+            controller.torchState.removeObserver(torchObserver)
+            controller.zoomState.removeObserver(zoomObserver)
+        }
     }
 
     LaunchedEffect(useBackCamera, torchState) {
@@ -245,6 +261,18 @@ fun CameraScreen() {
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                     )
                 }
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+                color = Color.Black.copy(alpha = 0.62f),
+                contentColor = Color.White,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    "Touchez l’aperçu pour faire le point · pincez pour zoomer",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
             }
         }
 
@@ -308,6 +336,25 @@ fun CameraScreen() {
                             }
                         )
                     }
+                }
+                if (maxZoomRatio > minZoomRatio) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Zoom")
+                        Text("%.1f×".format(zoomRatio))
+                    }
+                    Slider(
+                        value = zoomRatio.coerceIn(minZoomRatio, maxZoomRatio),
+                        onValueChange = { value ->
+                            zoomRatio = value
+                            controller.cameraControl?.setZoomRatio(value)
+                        },
+                        valueRange = minZoomRatio..maxZoomRatio,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                    )
                 }
                 Row(
                     Modifier.fillMaxWidth(),
