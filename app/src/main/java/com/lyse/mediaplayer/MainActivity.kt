@@ -71,6 +71,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.C
 import androidx.media3.common.DeviceInfo
+import androidx.media3.common.Format
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.TrackSelectionParameters
@@ -103,6 +104,7 @@ private const val HLS_VOD_URL =
     "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
 private const val HLS_LIVE_URL =
     "https://live-hls-apps-aje-fa.getaj.net/AJE/index.m3u8"
+private const val MAX_METADATA_FORMATS_PER_GROUP = 4
 data class Track(
     val title: String,
     val url: String,
@@ -223,23 +225,16 @@ class MainActivity : ComponentActivity() {
                     if (requestId != metadataRequestId || result == null) return
                     val trackGroups = result[0] as TrackGroupArray
                     val durationUs = result[1] as Long
-                    val trackCounts = (0 until trackGroups.length)
-                        .map { trackGroups.get(it).type }
-                        .groupingBy { it }
-                        .eachCount()
                     val duration = if (durationUs == C.TIME_UNSET) {
                         "durée inconnue"
                     } else {
                         formatMetadataDuration(TimeUnit.MICROSECONDS.toMillis(durationUs))
                     }
-                    val trackSummary = listOf(
-                        C.TRACK_TYPE_AUDIO to "audio",
-                        C.TRACK_TYPE_VIDEO to "vidéo",
-                        C.TRACK_TYPE_TEXT to "sous-titres"
-                    ).mapNotNull { (type, label) ->
-                        trackCounts[type]?.let { "$it $label" }
-                    }.ifEmpty { listOf("aucune piste détectée") }
-                    metadataMessage = "${track.title} · $duration · ${trackSummary.joinToString()}"
+                    metadataMessage = buildString {
+                        appendLine(track.title)
+                        appendLine("Durée : $duration")
+                        append(formatMetadataTrackDetails(trackGroups))
+                    }.trimEnd()
                 }
 
                 override fun onFailure(error: Throwable) {
@@ -252,6 +247,74 @@ class MainActivity : ComponentActivity() {
             ContextCompat.getMainExecutor(this)
         )
     }
+
+    private fun formatMetadataTrackDetails(trackGroups: TrackGroupArray): String {
+        if (trackGroups.length == 0) return "Pistes : aucune piste détectée"
+
+        val labels = mapOf(
+            C.TRACK_TYPE_VIDEO to "Vidéo",
+            C.TRACK_TYPE_AUDIO to "Audio",
+            C.TRACK_TYPE_TEXT to "Sous-titres"
+        )
+        val groupsByType = (0 until trackGroups.length)
+            .map(trackGroups::get)
+            .groupBy { it.type }
+
+        return buildList {
+            add("Pistes :")
+            groupsByType.forEach { (type, groups) ->
+                val label = labels[type] ?: "Autre"
+                groups.forEachIndexed { groupIndex, group ->
+                    val formats = (0 until group.length)
+                        .map { formatTrackDetails(group.getFormat(it), type) }
+                        .distinct()
+                    val shownFormats = formats.take(MAX_METADATA_FORMATS_PER_GROUP)
+                    add("$label ${groupIndex + 1} : ${shownFormats.joinToString(" ; ")}")
+                    val hiddenFormatCount = formats.size - shownFormats.size
+                    if (hiddenFormatCount > 0) {
+                        add("  et $hiddenFormatCount autre(s) format(s)")
+                    }
+                }
+            }
+        }.joinToString("\n")
+    }
+
+    private fun formatTrackDetails(format: Format, trackType: Int): String = buildList {
+        val mimeType = format.sampleMimeType
+        val codec = format.codecs?.takeIf(String::isNotBlank)
+        when {
+            mimeType != null && codec != null -> add("$mimeType ($codec)")
+            codec != null -> add(codec)
+            mimeType != null -> add(mimeType)
+        }
+
+        when (trackType) {
+            C.TRACK_TYPE_VIDEO -> {
+                if (format.width > 0 && format.height > 0) {
+                    add("${format.width} × ${format.height}")
+                }
+                if (format.frameRate > 0f && format.frameRate.isFinite()) {
+                    add("%.1f i/s".format(format.frameRate))
+                }
+            }
+            C.TRACK_TYPE_AUDIO -> {
+                if (format.sampleRate > 0) add("${format.sampleRate / 1000f} kHz")
+                if (format.channelCount > 0) {
+                    add(
+                        when (format.channelCount) {
+                            1 -> "mono"
+                            2 -> "stéréo"
+                            else -> "${format.channelCount} canaux"
+                        }
+                    )
+                }
+            }
+        }
+
+        format.language
+            ?.takeIf { it.isNotBlank() && it != "und" }
+            ?.let(::add)
+    }.ifEmpty { listOf("détails indisponibles") }.joinToString(" · ")
 
     private fun formatMetadataDuration(durationMs: Long): String {
         val totalSeconds = durationMs / 1_000
