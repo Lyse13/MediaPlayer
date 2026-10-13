@@ -90,6 +90,7 @@ fun CameraScreen() {
     }
     var videoQuality by remember { mutableStateOf(Quality.HD) }
     var videoQualityMenuExpanded by remember { mutableStateOf(false) }
+    var videoDynamicRange by remember { mutableStateOf(DynamicRange.SDR) }
     var torchState by remember { mutableIntStateOf(TorchState.OFF) }
     var exposureIndex by remember { mutableIntStateOf(0) }
     var zoomRatio by remember { mutableFloatStateOf(1f) }
@@ -134,10 +135,19 @@ fun CameraScreen() {
     val exposureState = cameraInfo?.exposureState
     val exposureRange = exposureState?.exposureCompensationRange
     val hasFlash = cameraInfo?.hasFlashUnit() == true
-    val supportedVideoQualities = remember(cameraInfo) {
+    val supportedVideoDynamicRanges = remember(cameraInfo) {
+        cameraInfo?.let {
+            runCatching { Recorder.getVideoCapabilities(it).supportedDynamicRanges.toList() }
+                .getOrDefault(emptyList())
+        }.orEmpty()
+    }
+    val supportedHdrDynamicRange = supportedVideoDynamicRanges.firstOrNull {
+        it == DynamicRange.HLG_10_BIT || it == DynamicRange.HDR10_10_BIT
+    }
+    val supportedVideoQualities = remember(cameraInfo, videoDynamicRange) {
         cameraInfo?.let {
             runCatching {
-                Recorder.getVideoCapabilities(it).getSupportedQualities(DynamicRange.SDR)
+                Recorder.getVideoCapabilities(it).getSupportedQualities(videoDynamicRange)
             }.getOrDefault(emptyList())
         }.orEmpty()
     }
@@ -174,6 +184,15 @@ fun CameraScreen() {
                     FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
                 )
             )
+        }
+    }
+
+    LaunchedEffect(useBackCamera, supportedVideoDynamicRanges) {
+        if (supportedVideoDynamicRanges.isNotEmpty() &&
+            videoDynamicRange !in supportedVideoDynamicRanges
+        ) {
+            videoDynamicRange = DynamicRange.SDR
+            controller.setVideoCaptureDynamicRange(DynamicRange.SDR)
         }
     }
 
@@ -334,6 +353,54 @@ fun CameraScreen() {
                                 "Photo : qualité"
                             } else {
                                 "Photo : rapide"
+                            }
+                        )
+                    }
+                }
+                if (supportedHdrDynamicRange != null) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                            Text("Vidéo HDR")
+                            Text(
+                                "${dynamicRangeLabel(supportedHdrDynamicRange)} · selon l’écran et l’appareil",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = videoDynamicRange != DynamicRange.SDR,
+                            enabled = !isRecording,
+                            onCheckedChange = { enabled ->
+                                val nextRange = if (enabled) {
+                                    supportedHdrDynamicRange
+                                } else {
+                                    DynamicRange.SDR
+                                }
+                                val qualities = cameraInfo?.let {
+                                    runCatching {
+                                        Recorder.getVideoCapabilities(it)
+                                            .getSupportedQualities(nextRange)
+                                    }.getOrDefault(emptyList())
+                                }.orEmpty()
+                                if (qualities.isNotEmpty()) {
+                                    videoDynamicRange = nextRange
+                                    val selectedQuality = videoQuality.takeIf { it in qualities }
+                                        ?: qualities.first()
+                                    videoQuality = selectedQuality
+                                    controller.setVideoCaptureDynamicRange(nextRange)
+                                    controller.setVideoCaptureQualitySelector(
+                                        QualitySelector.from(
+                                            selectedQuality,
+                                            FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                                        )
+                                    )
+                                } else {
+                                    status = "Aucune résolution compatible avec ce mode vidéo."
+                                }
                             }
                         )
                     }
@@ -516,6 +583,12 @@ private fun qualityLabel(quality: Quality): String = when (quality) {
     Quality.HD -> "720p · HD"
     Quality.SD -> "480p · SD"
     else -> "Auto"
+}
+
+private fun dynamicRangeLabel(dynamicRange: DynamicRange): String = when (dynamicRange) {
+    DynamicRange.HLG_10_BIT -> "HLG"
+    DynamicRange.HDR10_10_BIT -> "HDR10"
+    else -> "HDR"
 }
 
 @SuppressLint("MissingPermission")
