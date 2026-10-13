@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.TorchState
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoRecordEvent
@@ -34,6 +35,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,6 +43,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,9 +58,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.Observer
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 @Composable
 fun CameraScreen() {
@@ -70,6 +75,9 @@ fun CameraScreen() {
     var hasCamera by remember { mutableStateOf(granted(Manifest.permission.CAMERA)) }
     var hasAudio by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
     var useBackCamera by remember { mutableStateOf(true) }
+    var flashMode by remember { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
+    var torchState by remember { mutableIntStateOf(TorchState.OFF) }
+    var exposureIndex by remember { mutableIntStateOf(0) }
     var status by remember { mutableStateOf<String?>(null) }
     var analyzing by remember { mutableStateOf(false) }
     var luma by remember { mutableDoubleStateOf(0.0) }
@@ -95,6 +103,23 @@ fun CameraScreen() {
         LifecycleCameraController(context).apply {
             setEnabledUseCases(CameraController.IMAGE_CAPTURE or CameraController.VIDEO_CAPTURE)
         }
+    }
+
+    val cameraInfo = controller.cameraInfo
+    val exposureState = cameraInfo?.exposureState
+    val exposureRange = exposureState?.exposureCompensationRange
+    val hasFlash = cameraInfo?.hasFlashUnit() == true
+
+    DisposableEffect(controller, lifecycleOwner) {
+        val torchObserver = Observer<Int> { state ->
+            torchState = state ?: TorchState.OFF
+        }
+        controller.torchState.observe(lifecycleOwner, torchObserver)
+        onDispose { controller.torchState.removeObserver(torchObserver) }
+    }
+
+    LaunchedEffect(useBackCamera, torchState) {
+        exposureIndex = controller.cameraInfo?.exposureState?.exposureCompensationIndex ?: 0
     }
 
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
@@ -214,9 +239,85 @@ fun CameraScreen() {
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     OutlinedButton(
+                        enabled = !isRecording && hasFlash,
+                        onClick = {
+                            flashMode = when (flashMode) {
+                                ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_AUTO
+                                ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON
+                                else -> ImageCapture.FLASH_MODE_OFF
+                            }
+                            controller.imageCaptureFlashMode = flashMode
+                        }
+                    ) {
+                        Text(
+                            "Flash : ${when (flashMode) {
+                                ImageCapture.FLASH_MODE_AUTO -> "auto"
+                                ImageCapture.FLASH_MODE_ON -> "activé"
+                                else -> "désactivé"
+                            }}"
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Torche")
+                        Switch(
+                            checked = torchState == TorchState.ON,
+                            enabled = hasFlash,
+                            onCheckedChange = { enabled ->
+                                val future = controller.enableTorch(enabled)
+                                future.addListener({
+                                    try {
+                                        future.get()
+                                    } catch (exception: Exception) {
+                                        status = "Torche indisponible : ${exception.cause?.localizedMessage ?: exception.localizedMessage ?: "erreur caméra"}"
+                                    }
+                                }, ContextCompat.getMainExecutor(context))
+                            }
+                        )
+                    }
+                }
+                if (exposureState?.isExposureCompensationSupported == true &&
+                    exposureRange != null && exposureRange.lower < exposureRange.upper
+                ) {
+                    val minIndex = exposureRange.lower
+                    val maxIndex = exposureRange.upper
+                    val stepEv = exposureState.exposureCompensationStep.toDouble()
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Exposition")
+                        Text("%+.1f EV".format(exposureIndex * stepEv))
+                    }
+                    Slider(
+                        value = exposureIndex.toFloat().coerceIn(minIndex.toFloat(), maxIndex.toFloat()),
+                        onValueChange = { value ->
+                            val newIndex = value.roundToInt().coerceIn(minIndex, maxIndex)
+                            exposureIndex = newIndex
+                            controller.cameraControl?.setExposureCompensationIndex(newIndex)
+                        },
+                        valueRange = minIndex.toFloat()..maxIndex.toFloat(),
+                        steps = (maxIndex - minIndex - 1).coerceAtLeast(0),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                    )
+                } else {
+                    Text(
+                        "Réglage d’exposition indisponible sur cette caméra.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    OutlinedButton(
                         enabled = !isRecording,
                         onClick = {
                             useBackCamera = !useBackCamera
+                            flashMode = ImageCapture.FLASH_MODE_OFF
+                            controller.imageCaptureFlashMode = ImageCapture.FLASH_MODE_OFF
                             controller.cameraSelector =
                                 if (useBackCamera) CameraSelector.DEFAULT_BACK_CAMERA
                                 else CameraSelector.DEFAULT_FRONT_CAMERA
