@@ -101,6 +101,7 @@ fun CameraScreen() {
 
     var recording by remember { mutableStateOf<Recording?>(null) }
     var seconds by remember { mutableLongStateOf(0L) }
+    var photoCaptureInProgress by remember { mutableStateOf(false) }
     val isRecording = recording != null
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -467,10 +468,16 @@ fun CameraScreen() {
                         Text("Retourner")
                     }
                     Button(
-                        enabled = !isRecording,
-                        onClick = { takePhoto(context, controller) { status = it } }
+                        enabled = !photoCaptureInProgress,
+                        onClick = {
+                            photoCaptureInProgress = true
+                            takePhoto(context, controller) {
+                                photoCaptureInProgress = false
+                                status = it
+                            }
+                        }
                     ) {
-                        Text("Photo")
+                        Text(if (photoCaptureInProgress) "Photo…" else "Photo")
                     }
                     Button(enabled = !analyzing, onClick = {
                         if (isRecording) {
@@ -557,17 +564,21 @@ private fun takePhoto(
         values
     ).build()
 
-    controller.takePicture(
-        options,
-        ContextCompat.getMainExecutor(context),
-        object : ImageCapture.OnImageSavedCallback {
-            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                onStatus("Photo enregistrée dans Pictures/MediaPlayer")
-            }
+    try {
+        controller.takePicture(
+            options,
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    onStatus("Photo enregistrée dans Pictures/MediaPlayer")
+                }
 
-            override fun onError(exception: ImageCaptureException) {
-                onStatus("Erreur : ${exception.message}")
+                override fun onError(exception: ImageCaptureException) {
+                    onStatus("Erreur photo : ${exception.message}")
+                }
             }
-        }
-    )
+        )
+    } catch (exception: IllegalStateException) {
+        onStatus("Capture photo indisponible : ${exception.localizedMessage ?: "caméra non prête"}")
+    }
 }
