@@ -22,6 +22,7 @@ object MediaCatalog {
     const val DASH_URL = "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd"
     const val HLS_VOD_URL = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
     const val HLS_LIVE_URL = "https://live-hls-apps-aje-fa.getaj.net/AJE/index.m3u8"
+    const val CATEGORY_IMAGE = "category_image"
 
     data class Category(val id: String, val title: String, val tracks: List<Track>)
 
@@ -49,14 +50,24 @@ object MediaCatalog {
                 Track("HLS en direct (test)", HLS_LIVE_URL, MimeTypes.APPLICATION_M3U8),
             )
         ),
+        Category(
+            CATEGORY_IMAGE, "Images", listOf(
+                Track(
+                    "Diapositive (image 5 s)",
+                    "android.resource://${context.packageName}/${R.raw.sample_slide}",
+                    MimeTypes.IMAGE_PNG,
+                    imageDurationMs = 5_000L
+                ),
+            )
+        ),
     )
 
     /** Tous les médias, dans le même ordre qu'avant. */
     fun tracks(context: Context): List<Track> = categories(context).flatMap { it.tracks }
 
     /** Un média jouable : mediaId = url, ce qui permet de le retrouver avec [find]. */
-    fun mediaItem(track: Track): MediaItem =
-        MediaItem.Builder()
+    fun mediaItem(track: Track): MediaItem {
+        val builder = MediaItem.Builder()
             .setMediaId(track.url)
             .setUri(track.url)
             .setMimeType(track.mimeType)
@@ -67,7 +78,9 @@ object MediaCatalog {
                     .setIsPlayable(true)
                     .build()
             )
-            .build()
+        track.imageDurationMs?.let { builder.setImageDurationMs(it) }
+        return builder.build()
+    }
 
     private fun folder(id: String, title: String): MediaItem =
         MediaItem.Builder()

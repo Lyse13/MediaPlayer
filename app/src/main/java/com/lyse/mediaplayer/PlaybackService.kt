@@ -252,6 +252,10 @@ class PlaybackService : MediaLibraryService() {
                 DefaultMediaSourceFactory(this).setDataSourceFactory(playbackDataSourceFactory)
             )
             .build().apply {
+                trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setPreferredAudioLanguage(java.util.Locale.getDefault().language)
+                    .setPreferredTextLanguage(java.util.Locale.getDefault().language)
+                    .build()
                 addListener(playbackListener)
                 addAnalyticsListener(EventLogger())
                 addAnalyticsListener(

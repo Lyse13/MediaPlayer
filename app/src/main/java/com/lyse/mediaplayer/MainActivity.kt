@@ -119,13 +119,13 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.Executors
 
-
 private const val MAX_METADATA_FORMATS_PER_GROUP = 4
 private const val METADATA_REQUEST_TIMEOUT_SECONDS = 15L
 data class Track(
     val title: String,
     val url: String,
-    val mimeType: String? = null
+    val mimeType: String? = null,
+    val imageDurationMs: Long? = null
 )
 
 private data class MediaInfoDialogState(
@@ -648,8 +648,9 @@ class MainActivity : ComponentActivity() {
                     ) {
                         when (tab) {
                             0 -> {
-                                PlayerSurface(
-                                    player = player,
+                                val currentMimeType = playlistItems.getOrNull(currentIndex)?.localConfiguration?.mimeType
+                                val showingImage = currentMimeType?.startsWith("image/") == true
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .aspectRatio(16f / 9f)
@@ -676,8 +677,18 @@ class MainActivity : ComponentActivity() {
                                                     else -> false
                                                 }
                                             }
-                                        },
-                                )
+                                        }
+                                ) {
+                                    PlayerSurface(player = player, modifier = Modifier.fillMaxSize())
+                                    if (showingImage) {
+                                        Image(
+                                            painter = painterResource(R.drawable.sample_image),
+                                            contentDescription = "Image en cours de lecture",
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
+                                }
+
                                 LazyColumn(modifier = Modifier.weight(1f)) {
                                     item {
                                         Column(Modifier.fillMaxWidth()) {
