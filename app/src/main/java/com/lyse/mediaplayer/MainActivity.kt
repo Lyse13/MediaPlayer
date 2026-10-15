@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -101,6 +102,7 @@ import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.session.CommandButton
+import androidx.media3.session.MediaBrowser
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
@@ -118,12 +120,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.Executors
 
 
-private const val DASH_URL =
-    "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd"
-private const val HLS_VOD_URL =
-    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
-private const val HLS_LIVE_URL =
-    "https://live-hls-apps-aje-fa.getaj.net/AJE/index.m3u8"
 private const val MAX_METADATA_FORMATS_PER_GROUP = 4
 private const val METADATA_REQUEST_TIMEOUT_SECONDS = 15L
 data class Track(
@@ -156,21 +152,7 @@ private data class TrackChoice(
 @OptIn(UnstableApi::class)
 class MainActivity : ComponentActivity() {
 
-    private val tracks by lazy {
-        listOf(
-            Track("Big Buck Bunny (video)", "https://storage.googleapis.com/exoplayer-test-media-0/BigBuckBunny_320x180.mp4"),
-            Track("Jazz in Paris (audio)", "https://storage.googleapis.com/exoplayer-test-media-0/Jazz_In_Paris.mp3"),
-            Track("Local sample (audio)", "android.resource://$packageName/${R.raw.sample_audio}"),
-            Track("Streaming adaptatif DASH (vidéo)", DASH_URL, MimeTypes.APPLICATION_MPD),
-            Track(
-                "DASH avec sous-titres (Elephants Dream)",
-                "https://dash.akamaized.net/akamai/test/caption_test/ElephantsDream/elephants_dream_480p_heaac5_1_https.mpd",
-                MimeTypes.APPLICATION_MPD
-            ),
-            Track("HLS adaptatif (vidéo à la demande)", HLS_VOD_URL, MimeTypes.APPLICATION_M3U8),
-            Track("HLS en direct (test)", HLS_LIVE_URL, MimeTypes.APPLICATION_M3U8),
-        )
-    }
+    private val tracks by lazy { MediaCatalog.tracks(this) }
 
     private var player by mutableStateOf<Player?>(null)
     private var currentIndex by mutableIntStateOf(0)
@@ -222,17 +204,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun createMediaItem(track: Track): MediaItem =
-        MediaItem.Builder()
-            .setMediaId(track.url)
-            .setUri(track.url)
-            .setMimeType(track.mimeType)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(track.title)
-                    .build()
-            )
-            .build()
+    private fun createMediaItem(track: Track): MediaItem = MediaCatalog.mediaItem(track)
 
     @OptIn(UnstableApi::class)
     private fun inspectMetadata(track: Track) {
@@ -460,9 +432,9 @@ class MainActivity : ComponentActivity() {
         shuffleModeEnabled = source.shuffleModeEnabled
         canChangePlaylist = source.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)
         canSkipPrevious = source.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) &&
-            source.hasPreviousMediaItem()
+                source.hasPreviousMediaItem()
         canSkipNext = source.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM) &&
-            source.hasNextMediaItem()
+                source.hasNextMediaItem()
         canSetRepeatMode = source.isCommandAvailable(Player.COMMAND_SET_REPEAT_MODE)
         canSetShuffleMode = source.isCommandAvailable(Player.COMMAND_SET_SHUFFLE_MODE)
         canSetTrackSelectionParameters =
@@ -471,7 +443,7 @@ class MainActivity : ComponentActivity() {
 
     private fun updateTrackChoices(tracks: Tracks) {
         hasVideoTracks = tracks.containsType(C.TRACK_TYPE_VIDEO) &&
-            tracks.isTypeSupported(C.TRACK_TYPE_VIDEO)
+                tracks.isTypeSupported(C.TRACK_TYPE_VIDEO)
         audioTrackChoices = createTrackChoices(tracks, C.TRACK_TYPE_AUDIO)
         textTrackChoices = createTrackChoices(tracks, C.TRACK_TYPE_TEXT)
         if (textTrackChoices.any(TrackChoice::isSelected)) subtitlesDisabled = false
@@ -550,7 +522,7 @@ class MainActivity : ComponentActivity() {
         override fun onPlayerError(error: PlaybackException) {
             playbackError = error.localizedMessage
                 ?: error.cause?.localizedMessage
-                ?: error.errorCodeName
+                        ?: error.errorCodeName
         }
 
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
@@ -589,7 +561,7 @@ class MainActivity : ComponentActivity() {
                     it.icon == CommandButton.ICON_HEART_FILLED
         }
     }
-    private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var controllerFuture: ListenableFuture<MediaBrowser>? = null
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -675,599 +647,620 @@ class MainActivity : ComponentActivity() {
                             .padding(contentPadding)
                     ) {
                         when (tab) {
-                    0 -> {
-                        PlayerSurface(
-                            player = player,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(16f / 9f)
-                                .focusable()
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type != KeyEventType.KeyUp) {
-                                        false
-                                    } else {
-                                        when (event.key) {
-                                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
-                                                player?.let {
-                                                    Util.handlePlayPauseButtonAction(it)
-                                                    true
-                                                } ?: false
-                                            }
-                                            Key.DirectionLeft -> {
-                                                player?.seekBack()
-                                                player != null
-                                            }
-                                            Key.DirectionRight -> {
-                                                player?.seekForward()
-                                                player != null
-                                            }
-                                            else -> false
-                                        }
-                                    }
-                                },
-                        )
-                        LazyColumn(modifier = Modifier.weight(1f)) {
-                            item {
-                                Column(Modifier.fillMaxWidth()) {
-                        val playbackStatus = when {
-                            playbackError != null -> "Erreur de lecture"
-                            isPlaying -> "Lecture en cours"
-                            playbackState == Player.STATE_BUFFERING -> "Chargement…"
-                            playbackState == Player.STATE_READY -> "En pause"
-                            playbackState == Player.STATE_ENDED -> "Lecture terminée"
-                            else -> "Lecteur prêt"
-                        }
-                        Card(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (playbackError != null) {
-                                    MaterialTheme.colorScheme.errorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surface
-                                }
-                            )
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                if (playbackState == Player.STATE_BUFFERING && playbackError == null) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                }
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        playlistItems.getOrNull(currentIndex)?.mediaMetadata?.title?.toString()
-                                            ?: "Aucune piste sélectionnée",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = if (playbackError != null) {
-                                            MaterialTheme.colorScheme.onErrorContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
-                                        }
-                                    )
-                                    Text(
-                                        playbackStatus,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (playbackError != null) {
-                                            MaterialTheme.colorScheme.onErrorContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.primary
-                                        }
-                                    )
-                                    Text(outputName, style = MaterialTheme.typography.bodySmall)
-                                    playbackError?.let { message ->
-                                        Text(
-                                            message,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onErrorContainer
-                                        )
-                                    }
-                                }
-                                if (playbackError != null) {
-                                    Button(
-                                        onClick = {
-                                            val activePlayer = player ?: return@Button
-                                            playbackError = null
-                                            activePlayer.prepare()
-                                            activePlayer.play()
-                                        }
-                                    ) {
-                                        Text("Réessayer")
-                                    }
-                                }
-                                val castCanReachEntirePlaylist = playlistItems.isNotEmpty() &&
-                                    playlistItems.all { item ->
-                                        item.localConfiguration?.uri?.scheme in setOf("http", "https")
-                                    }
-                                if (castCanReachEntirePlaylist) {
-                                    MediaRouteButton(state = rememberMediaRouteButtonState())
-                                }
-                            }
-                        }
-                        if (player != null) PlaybackProgress(player)
-                        val showPlayButton = player?.let { Util.shouldShowPlayButton(it) } ?: true
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                enabled = canSkipPrevious,
-                                onClick = { player?.seekToPreviousMediaItem() }
-                            ) {
-                                Icon(Icons.Filled.ArrowBack, contentDescription = "Précédent")
-                            }
-                            FilledTonalButton(
-                                enabled = player != null,
-                                onClick = { player?.let { Util.handlePlayPauseButtonAction(it) } },
-                                shape = RoundedCornerShape(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.PlayArrow,
-                                    contentDescription = if (showPlayButton) "Lecture" else "Pause"
-                                )
-                            }
-                            IconButton(
-                                enabled = canSkipNext,
-                                onClick = { player?.seekToNextMediaItem() }
-                            ) {
-                                Icon(Icons.Filled.ArrowForward, contentDescription = "Suivant")
-                            }
-                        }
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                                .clickable { playbackOptionsExpanded = !playbackOptionsExpanded },
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            ),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Commandes", style = MaterialTheme.typography.titleSmall)
-                                    Text(
-                                        "Qualité, pistes audio et répétition",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    if (playbackOptionsExpanded) "Masquer" else "Options",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                            }
-                        }
-                        if (playbackOptionsExpanded) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (hasVideoTracks) {
-                                Box {
-                                    Button(
-                                        enabled = canSetTrackSelectionParameters,
-                                        onClick = { qualityMenuExpanded = true }
-                                    ) {
-                                        Text("Qualité : ${videoQuality.label}")
-                                    }
-                                    DropdownMenu(
-                                        expanded = qualityMenuExpanded,
-                                        onDismissRequest = { qualityMenuExpanded = false }
-                                    ) {
-                                        VideoQuality.values().forEach { quality ->
-                                            DropdownMenuItem(
-                                                text = { Text(quality.label) },
-                                                onClick = {
-                                                    applyVideoQuality(quality)
-                                                    qualityMenuExpanded = false
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            if (audioTrackChoices.size > 1) {
-                                Box {
-                                    Button(
-                                        enabled = canSetTrackSelectionParameters,
-                                        onClick = { audioMenuExpanded = true }
-                                    ) {
-                                        val selectedAudio = audioTrackChoices
-                                            .firstOrNull(TrackChoice::isSelected)?.label ?: "Auto"
-                                        Text("Audio : $selectedAudio")
-                                    }
-                                    DropdownMenu(
-                                        expanded = audioMenuExpanded,
-                                        onDismissRequest = { audioMenuExpanded = false }
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text("Auto") },
-                                            onClick = {
-                                                selectTrack(C.TRACK_TYPE_AUDIO)
-                                                audioMenuExpanded = false
-                                            }
-                                        )
-                                        audioTrackChoices.forEach { choice ->
-                                            DropdownMenuItem(
-                                                text = {
-                                                    Text(if (choice.isSelected) "✓ ${choice.label}" else choice.label)
-                                                },
-                                                onClick = {
-                                                    selectTrack(C.TRACK_TYPE_AUDIO, choice)
-                                                    audioMenuExpanded = false
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                            if (textTrackChoices.isNotEmpty()) {
-                            Box(Modifier.padding(horizontal = 8.dp)) {
-                                Button(
-                                    enabled = canSetTrackSelectionParameters,
-                                    onClick = { textMenuExpanded = true }
-                                ) {
-                                    val selectedText = textTrackChoices
-                                        .firstOrNull(TrackChoice::isSelected)?.label
-                                        ?: if (subtitlesDisabled) "Désactivés" else "Auto"
-                                    Text("Sous-titres : $selectedText")
-                                }
-                                DropdownMenu(
-                                    expanded = textMenuExpanded,
-                                    onDismissRequest = { textMenuExpanded = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Désactivés") },
-                                        onClick = {
-                                            selectTrack(C.TRACK_TYPE_TEXT, disabled = true)
-                                            textMenuExpanded = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Auto") },
-                                        onClick = {
-                                            selectTrack(C.TRACK_TYPE_TEXT)
-                                            textMenuExpanded = false
-                                        }
-                                    )
-                                    textTrackChoices.forEach { choice ->
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(if (choice.isSelected) "✓ ${choice.label}" else choice.label)
-                                            },
-                                            onClick = {
-                                                selectTrack(C.TRACK_TYPE_TEXT, choice)
-                                                textMenuExpanded = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                            }
-                            if (hasVideoTracks && audioTrackChoices.isNotEmpty()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
-                                        Text(
-                                            "Audio seulement",
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                        Text(
-                                            "Désactive la piste vidéo",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Switch(
-                                        checked = audioOnly,
-                                        enabled = canSetTrackSelectionParameters,
-                                        onCheckedChange = ::applyAudioOnlyMode
-                                    )
-                                }
-                            }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            FilledTonalButton(
-                                enabled = canSetShuffleMode,
-                                onClick = {
-                                    player?.shuffleModeEnabled = !shuffleModeEnabled
-                                }
-                            ) {
-                                Text(if (shuffleModeEnabled) "Aléatoire : actif" else "Aléatoire : inactif")
-                            }
-                            FilledTonalButton(
-                                enabled = canSetRepeatMode,
-                                onClick = {
-                                    val nextRepeatMode = when (repeatMode) {
-                                        Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                                        Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                                        else -> Player.REPEAT_MODE_OFF
-                                    }
-                                    player?.repeatMode = nextRepeatMode
-                                }
-                            ) {
-                                Text(
-                                    when (repeatMode) {
-                                        Player.REPEAT_MODE_ONE -> "Répéter : titre"
-                                        Player.REPEAT_MODE_ALL -> "Répéter : playlist"
-                                        else -> "Répéter : non"
-                                    }
-                                )
-                            }
-                        }
-                        Button(
-                            onClick = {
-                                (player as? MediaController)?.sendCustomCommand(
-                                    SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY),
-                                    Bundle.EMPTY
-                                )
-                            },
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                                contentDescription = null
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (isFavorite) "Retirer des favoris" else "Ajouter aux favoris")
-                        }
-                        }
-                        }
-                                }
-                            }
-                            item {
-                                Card(
+                            0 -> {
+                                PlayerSurface(
+                                    player = player,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                                        .clickable { playlistExpanded = !playlistExpanded },
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                    ),
-                                    shape = RoundedCornerShape(16.dp)
-                                ) {
-                                    Row(
-                                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text("File d’attente", style = MaterialTheme.typography.titleSmall)
-                                            Text(
-                                                "${playlistItems.size} média(s)",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        Text(
-                                            if (playlistExpanded) "Masquer" else "Afficher",
-                                            color = MaterialTheme.colorScheme.primary,
-                                            style = MaterialTheme.typography.labelLarge
-                                        )
-                                    }
-                                }
-                            }
-                            if (playlistExpanded) {
-                            itemsIndexed(playlistItems) { index, item ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = if (index == currentIndex) {
-                                            MaterialTheme.colorScheme.secondaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.surface
-                                        }
-                                    )
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Image(
-                                            painter = painterResource(R.drawable.sample_image),
-                                            contentDescription = "Illustration de ${item.mediaMetadata.title ?: "la piste"}",
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                        )
-                                        Text(
-                                            text = item.mediaMetadata.title?.toString() ?: item.mediaId,
-                                            fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (index == currentIndex) {
-                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                        .aspectRatio(16f / 9f)
+                                        .focusable()
+                                        .onPreviewKeyEvent { event ->
+                                            if (event.type != KeyEventType.KeyUp) {
+                                                false
                                             } else {
-                                                MaterialTheme.colorScheme.onSurface
-                                            },
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .clickable {
-                                                    player?.seekToDefaultPosition(index)
-                                                    player?.play()
+                                                when (event.key) {
+                                                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                                        player?.let {
+                                                            Util.handlePlayPauseButtonAction(it)
+                                                            true
+                                                        } ?: false
+                                                    }
+                                                    Key.DirectionLeft -> {
+                                                        player?.seekBack()
+                                                        player != null
+                                                    }
+                                                    Key.DirectionRight -> {
+                                                        player?.seekForward()
+                                                        player != null
+                                                    }
+                                                    else -> false
                                                 }
-                                                .padding(8.dp)
-                                        )
-                                        TextButton(
-                                            enabled = canChangePlaylist && index > 0,
-                                            onClick = { player?.moveMediaItem(index, index - 1) }
-                                        ) {
-                                            Text("↑")
-                                        }
-                                        TextButton(
-                                            enabled = canChangePlaylist && index < playlistItems.lastIndex,
-                                            onClick = { player?.moveMediaItem(index, index + 1) }
-                                        ) {
-                                            Text("↓")
-                                        }
-                                        TextButton(
-                                            enabled = canChangePlaylist,
-                                            onClick = { player?.removeMediaItem(index) }
-                                        ) {
-                                            Text("Retirer")
-                                        }
-                                    }
-                                }
-                            }
-                            }
-                            item {
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                                        .clickable { examplesExpanded = !examplesExpanded },
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                    ),
-                                    shape = RoundedCornerShape(16.dp)
-                                ) {
-                                    Row(
-                                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text("Exemples de lecture", style = MaterialTheme.typography.titleSmall)
-                                            Text(
-                                                "Vidéos, audio et flux en direct",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        Text(
-                                            if (examplesExpanded) "Masquer" else "Explorer",
-                                            color = MaterialTheme.colorScheme.primary,
-                                            style = MaterialTheme.typography.labelLarge
-                                        )
-                                    }
-                                }
-                            }
-                            if (examplesExpanded) {
-                            items(tracks) { track ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surface
-                                    )
-                                ) {
-                                    Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp)) {
-                                        Text(
-                                            track.title,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            modifier = Modifier.padding(top = 10.dp, end = 8.dp)
-                                        )
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                        ) {
-                                            Button(
-                                                enabled = canChangePlaylist,
-                                                onClick = { player?.addMediaItem(createMediaItem(track)) }
-                                            ) {
-                                                Text("Ajouter")
                                             }
-                                            TextButton(onClick = { inspectMetadata(track) }) {
-                                                Text("Infos")
+                                        },
+                                )
+                                LazyColumn(modifier = Modifier.weight(1f)) {
+                                    item {
+                                        Column(Modifier.fillMaxWidth()) {
+                                            val playbackStatus = when {
+                                                playbackError != null -> "Erreur de lecture"
+                                                isPlaying -> "Lecture en cours"
+                                                playbackState == Player.STATE_BUFFERING -> "Chargement…"
+                                                playbackState == Player.STATE_READY -> "En pause"
+                                                playbackState == Player.STATE_ENDED -> "Lecture terminée"
+                                                else -> "Lecteur prêt"
                                             }
-                                            val download = downloads[track.url]
-                                            TextButton(
-                                                enabled = (track.url.startsWith("https://") ||
-                                                    track.url.startsWith("http://")) && track.url != HLS_LIVE_URL,
-                                                onClick = {
-                                                    if (download?.state == Download.STATE_COMPLETED ||
-                                                        download?.state == Download.STATE_DOWNLOADING ||
-                                                        download?.state == Download.STATE_QUEUED
-                                                    ) {
-                                                        removeOfflineDownload(track.url)
+                                            Card(
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = if (playbackError != null) {
+                                                        MaterialTheme.colorScheme.errorContainer
                                                     } else {
-                                                        addOfflineDownload(track)
+                                                        MaterialTheme.colorScheme.surface
+                                                    }
+                                                )
+                                            ) {
+                                                Row(
+                                                    Modifier.fillMaxWidth().padding(14.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                ) {
+                                                    if (playbackState == Player.STATE_BUFFERING && playbackError == null) {
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier.size(20.dp),
+                                                            strokeWidth = 2.dp
+                                                        )
+                                                    }
+                                                    Column(Modifier.weight(1f)) {
+                                                        Text(
+                                                            playlistItems.getOrNull(currentIndex)?.mediaMetadata?.title?.toString()
+                                                                ?: "Aucune piste sélectionnée",
+                                                            style = MaterialTheme.typography.titleMedium,
+                                                            color = if (playbackError != null) {
+                                                                MaterialTheme.colorScheme.onErrorContainer
+                                                            } else {
+                                                                MaterialTheme.colorScheme.onSurface
+                                                            }
+                                                        )
+                                                        Text(
+                                                            playbackStatus,
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            color = if (playbackError != null) {
+                                                                MaterialTheme.colorScheme.onErrorContainer
+                                                            } else {
+                                                                MaterialTheme.colorScheme.primary
+                                                            }
+                                                        )
+                                                        Text(outputName, style = MaterialTheme.typography.bodySmall)
+                                                        playbackError?.let { message ->
+                                                            Text(
+                                                                message,
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onErrorContainer
+                                                            )
+                                                        }
+                                                    }
+                                                    if (playbackError != null) {
+                                                        Button(
+                                                            onClick = {
+                                                                val activePlayer = player ?: return@Button
+                                                                playbackError = null
+                                                                activePlayer.prepare()
+                                                                activePlayer.play()
+                                                            }
+                                                        ) {
+                                                            Text("Réessayer")
+                                                        }
+                                                    }
+                                                    val castCanReachEntirePlaylist = playlistItems.isNotEmpty() &&
+                                                            playlistItems.all { item ->
+                                                                item.localConfiguration?.uri?.scheme in setOf("http", "https")
+                                                            }
+                                                    if (castCanReachEntirePlaylist) {
+                                                        MediaRouteButton(state = rememberMediaRouteButtonState())
                                                     }
                                                 }
+                                            }
+                                            if (player != null) PlaybackProgress(player)
+                                            val showPlayButton = player?.let { Util.shouldShowPlayButton(it) } ?: true
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Text(
-                                                    when {
-                                                        track.url == HLS_LIVE_URL -> "Direct"
-                                                        download?.state == Download.STATE_COMPLETED -> "Retirer"
-                                                        download?.state == Download.STATE_DOWNLOADING ||
-                                                            download?.state == Download.STATE_QUEUED -> "Annuler"
-                                                        else -> "Hors ligne"
+                                                IconButton(
+                                                    enabled = canSkipPrevious,
+                                                    onClick = { player?.seekToPreviousMediaItem() }
+                                                ) {
+                                                    Icon(Icons.Filled.ArrowBack, contentDescription = "Précédent")
+                                                }
+                                                FilledTonalButton(
+                                                    enabled = player != null,
+                                                    onClick = { player?.let { Util.handlePlayPauseButtonAction(it) } },
+                                                    shape = RoundedCornerShape(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.PlayArrow,
+                                                        contentDescription = if (showPlayButton) "Lecture" else "Pause"
+                                                    )
+                                                }
+                                                IconButton(
+                                                    enabled = canSkipNext,
+                                                    onClick = { player?.seekToNextMediaItem() }
+                                                ) {
+                                                    Icon(Icons.Filled.ArrowForward, contentDescription = "Suivant")
+                                                }
+                                            }
+                                            Card(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                                    .clickable { playbackOptionsExpanded = !playbackOptionsExpanded },
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                                ),
+                                                shape = RoundedCornerShape(16.dp)
+                                            ) {
+                                                Row(
+                                                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(Modifier.weight(1f)) {
+                                                        Text("Commandes", style = MaterialTheme.typography.titleSmall)
+                                                        Text(
+                                                            "Qualité, pistes audio et répétition",
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
                                                     }
+                                                    Text(
+                                                        if (playbackOptionsExpanded) "Masquer" else "Options",
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        style = MaterialTheme.typography.labelLarge
+                                                    )
+                                                }
+                                            }
+                                            if (playbackOptionsExpanded) {
+                                                Column(
+                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        if (hasVideoTracks) {
+                                                            Box {
+                                                                Button(
+                                                                    enabled = canSetTrackSelectionParameters,
+                                                                    onClick = { qualityMenuExpanded = true }
+                                                                ) {
+                                                                    Text("Qualité : ${videoQuality.label}")
+                                                                }
+                                                                DropdownMenu(
+                                                                    expanded = qualityMenuExpanded,
+                                                                    onDismissRequest = { qualityMenuExpanded = false }
+                                                                ) {
+                                                                    VideoQuality.values().forEach { quality ->
+                                                                        DropdownMenuItem(
+                                                                            text = { Text(quality.label) },
+                                                                            onClick = {
+                                                                                applyVideoQuality(quality)
+                                                                                qualityMenuExpanded = false
+                                                                            }
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        if (audioTrackChoices.size > 1) {
+                                                            Box {
+                                                                Button(
+                                                                    enabled = canSetTrackSelectionParameters,
+                                                                    onClick = { audioMenuExpanded = true }
+                                                                ) {
+                                                                    val selectedAudio = audioTrackChoices
+                                                                        .firstOrNull(TrackChoice::isSelected)?.label ?: "Auto"
+                                                                    Text("Audio : $selectedAudio")
+                                                                }
+                                                                DropdownMenu(
+                                                                    expanded = audioMenuExpanded,
+                                                                    onDismissRequest = { audioMenuExpanded = false }
+                                                                ) {
+                                                                    DropdownMenuItem(
+                                                                        text = { Text("Auto") },
+                                                                        onClick = {
+                                                                            selectTrack(C.TRACK_TYPE_AUDIO)
+                                                                            audioMenuExpanded = false
+                                                                        }
+                                                                    )
+                                                                    audioTrackChoices.forEach { choice ->
+                                                                        DropdownMenuItem(
+                                                                            text = {
+                                                                                Text(if (choice.isSelected) "✓ ${choice.label}" else choice.label)
+                                                                            },
+                                                                            onClick = {
+                                                                                selectTrack(C.TRACK_TYPE_AUDIO, choice)
+                                                                                audioMenuExpanded = false
+                                                                            }
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if (textTrackChoices.isNotEmpty()) {
+                                                        Box(Modifier.padding(horizontal = 8.dp)) {
+                                                            Button(
+                                                                enabled = canSetTrackSelectionParameters,
+                                                                onClick = { textMenuExpanded = true }
+                                                            ) {
+                                                                val selectedText = textTrackChoices
+                                                                    .firstOrNull(TrackChoice::isSelected)?.label
+                                                                    ?: if (subtitlesDisabled) "Désactivés" else "Auto"
+                                                                Text("Sous-titres : $selectedText")
+                                                            }
+                                                            DropdownMenu(
+                                                                expanded = textMenuExpanded,
+                                                                onDismissRequest = { textMenuExpanded = false }
+                                                            ) {
+                                                                DropdownMenuItem(
+                                                                    text = { Text("Désactivés") },
+                                                                    onClick = {
+                                                                        selectTrack(C.TRACK_TYPE_TEXT, disabled = true)
+                                                                        textMenuExpanded = false
+                                                                    }
+                                                                )
+                                                                DropdownMenuItem(
+                                                                    text = { Text("Auto") },
+                                                                    onClick = {
+                                                                        selectTrack(C.TRACK_TYPE_TEXT)
+                                                                        textMenuExpanded = false
+                                                                    }
+                                                                )
+                                                                textTrackChoices.forEach { choice ->
+                                                                    DropdownMenuItem(
+                                                                        text = {
+                                                                            Text(if (choice.isSelected) "✓ ${choice.label}" else choice.label)
+                                                                        },
+                                                                        onClick = {
+                                                                            selectTrack(C.TRACK_TYPE_TEXT, choice)
+                                                                            textMenuExpanded = false
+                                                                        }
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if (hasVideoTracks && audioTrackChoices.isNotEmpty()) {
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.SpaceBetween
+                                                        ) {
+                                                            Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                                                                Text(
+                                                                    "Audio seulement",
+                                                                    style = MaterialTheme.typography.titleMedium
+                                                                )
+                                                                Text(
+                                                                    "Désactive la piste vidéo",
+                                                                    style = MaterialTheme.typography.bodySmall,
+                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                                )
+                                                            }
+                                                            Switch(
+                                                                checked = audioOnly,
+                                                                enabled = canSetTrackSelectionParameters,
+                                                                onCheckedChange = ::applyAudioOnlyMode
+                                                            )
+                                                        }
+                                                    }
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceEvenly,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        FilledTonalButton(
+                                                            enabled = canSetShuffleMode,
+                                                            onClick = {
+                                                                player?.shuffleModeEnabled = !shuffleModeEnabled
+                                                            }
+                                                        ) {
+                                                            Text(if (shuffleModeEnabled) "Aléatoire : actif" else "Aléatoire : inactif")
+                                                        }
+                                                        FilledTonalButton(
+                                                            enabled = canSetRepeatMode,
+                                                            onClick = {
+                                                                val nextRepeatMode = when (repeatMode) {
+                                                                    Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                                                                    Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                                                                    else -> Player.REPEAT_MODE_OFF
+                                                                }
+                                                                player?.repeatMode = nextRepeatMode
+                                                            }
+                                                        ) {
+                                                            Text(
+                                                                when (repeatMode) {
+                                                                    Player.REPEAT_MODE_ONE -> "Répéter : titre"
+                                                                    Player.REPEAT_MODE_ALL -> "Répéter : playlist"
+                                                                    else -> "Répéter : non"
+                                                                }
+                                                            )
+                                                        }
+                                                    }
+                                                    Button(
+                                                        onClick = {
+                                                            (player as? MediaController)?.sendCustomCommand(
+                                                                SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY),
+                                                                Bundle.EMPTY
+                                                            )
+                                                        },
+                                                        modifier = Modifier.padding(horizontal = 16.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                                            contentDescription = null
+                                                        )
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Text(if (isFavorite) "Retirer des favoris" else "Ajouter aux favoris")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    item {
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                                .clickable { playlistExpanded = !playlistExpanded },
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                            ),
+                                            shape = RoundedCornerShape(16.dp)
+                                        ) {
+                                            Row(
+                                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text("File d’attente", style = MaterialTheme.typography.titleSmall)
+                                                    Text(
+                                                        "${playlistItems.size} média(s)",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Text(
+                                                    if (playlistExpanded) "Masquer" else "Afficher",
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    style = MaterialTheme.typography.labelLarge
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (playlistExpanded) {
+                                        itemsIndexed(playlistItems) { index, item ->
+                                            Card(
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = if (index == currentIndex) {
+                                                        MaterialTheme.colorScheme.secondaryContainer
+                                                    } else {
+                                                        MaterialTheme.colorScheme.surface
+                                                    }
+                                                )
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Image(
+                                                        painter = painterResource(R.drawable.sample_image),
+                                                        contentDescription = "Illustration de ${item.mediaMetadata.title ?: "la piste"}",
+                                                        modifier = Modifier
+                                                            .size(48.dp)
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                    )
+                                                    Text(
+                                                        text = item.mediaMetadata.title?.toString() ?: item.mediaId,
+                                                        fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
+                                                        color = if (index == currentIndex) {
+                                                            MaterialTheme.colorScheme.onSecondaryContainer
+                                                        } else {
+                                                            MaterialTheme.colorScheme.onSurface
+                                                        },
+                                                        modifier = Modifier
+                                                            .weight(1f)
+                                                            .clickable {
+                                                                player?.seekToDefaultPosition(index)
+                                                                player?.play()
+                                                            }
+                                                            .padding(8.dp)
+                                                    )
+                                                    TextButton(
+                                                        enabled = canChangePlaylist && index > 0,
+                                                        onClick = { player?.moveMediaItem(index, index - 1) }
+                                                    ) {
+                                                        Text("↑")
+                                                    }
+                                                    TextButton(
+                                                        enabled = canChangePlaylist && index < playlistItems.lastIndex,
+                                                        onClick = { player?.moveMediaItem(index, index + 1) }
+                                                    ) {
+                                                        Text("↓")
+                                                    }
+                                                    TextButton(
+                                                        enabled = canChangePlaylist,
+                                                        onClick = { player?.removeMediaItem(index) }
+                                                    ) {
+                                                        Text("Retirer")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    item {
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                                .clickable { examplesExpanded = !examplesExpanded },
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                            ),
+                                            shape = RoundedCornerShape(16.dp)
+                                        ) {
+                                            Row(
+                                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text("Exemples de lecture", style = MaterialTheme.typography.titleSmall)
+                                                    Text(
+                                                        "Vidéos, audio et flux en direct",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Text(
+                                                    if (examplesExpanded) "Masquer" else "Explorer",
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    style = MaterialTheme.typography.labelLarge
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (examplesExpanded) {
+                                        items(tracks) { track ->
+                                            Card(
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = MaterialTheme.colorScheme.surface
+                                                )
+                                            ) {
+                                                Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp)) {
+                                                    Text(
+                                                        track.title,
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        modifier = Modifier.padding(top = 10.dp, end = 8.dp)
+                                                    )
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                    ) {
+                                                        Button(
+                                                            enabled = canChangePlaylist,
+                                                            onClick = { player?.addMediaItem(createMediaItem(track)) }
+                                                        ) {
+                                                            Text("Ajouter")
+                                                        }
+                                                        TextButton(onClick = { inspectMetadata(track) }) {
+                                                            Text("Infos")
+                                                        }
+                                                        val download = downloads[track.url]
+                                                        TextButton(
+                                                            enabled = (track.url.startsWith("https://") ||
+                                                                    track.url.startsWith("http://")) && track.url != MediaCatalog.HLS_LIVE_URL,
+                                                            onClick = {
+                                                                if (download?.state == Download.STATE_COMPLETED ||
+                                                                    download?.state == Download.STATE_DOWNLOADING ||
+                                                                    download?.state == Download.STATE_QUEUED
+                                                                ) {
+                                                                    removeOfflineDownload(track.url)
+                                                                } else {
+                                                                    addOfflineDownload(track)
+                                                                }
+                                                            }
+                                                        ) {
+                                                            Text(
+                                                                when {
+                                                                    track.url == MediaCatalog.HLS_LIVE_URL -> "Direct"
+                                                                    download?.state == Download.STATE_COMPLETED -> "Retirer"
+                                                                    download?.state == Download.STATE_DOWNLOADING ||
+                                                                            download?.state == Download.STATE_QUEUED -> "Annuler"
+                                                                    else -> "Hors ligne"
+                                                                }
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            downloads[track.url]?.let { download ->
+                                                Text(
+                                                    downloadStatus(download),
+                                                    modifier = Modifier.padding(horizontal = 16.dp)
                                                 )
                                             }
                                         }
                                     }
                                 }
-                                downloads[track.url]?.let { download ->
-                                    Text(
-                                        downloadStatus(download),
-                                        modifier = Modifier.padding(horizontal = 16.dp)
+                                if (metadataDialogVisible) {
+                                    AlertDialog(
+                                        onDismissRequest = { metadataDialogVisible = false },
+                                        title = { Text("Informations du média") },
+                                        text = {
+                                            val info = metadataInfoState
+                                            Column(
+                                                modifier = Modifier
+                                                    .heightIn(max = 400.dp)
+                                                    .verticalScroll(rememberScrollState()),
+                                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                Text(info?.title.orEmpty(), style = MaterialTheme.typography.titleSmall)
+                                                Text("Durée : ${info?.duration ?: info?.durationError ?: "Analyse en cours…"}")
+                                                Text(
+                                                    info?.tracks
+                                                        ?: info?.tracksError
+                                                        ?: "Analyse des pistes en cours…"
+                                                )
+                                            }
+                                        },
+                                        confirmButton = {
+                                            TextButton(onClick = { metadataDialogVisible = false }) {
+                                                Text("Fermer")
+                                            }
+                                        }
                                     )
                                 }
                             }
+                            1 -> {
+                                EditorScreen()
+                            }
+                            else -> {
+                                CameraScreen()
                             }
                         }
-                        if (metadataDialogVisible) {
-                            AlertDialog(
-                                onDismissRequest = { metadataDialogVisible = false },
-                                title = { Text("Informations du média") },
-                                text = {
-                                    val info = metadataInfoState
-                                    Column(
-                                        modifier = Modifier
-                                            .heightIn(max = 400.dp)
-                                            .verticalScroll(rememberScrollState()),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Text(info?.title.orEmpty(), style = MaterialTheme.typography.titleSmall)
-                                        Text("Durée : ${info?.duration ?: info?.durationError ?: "Analyse en cours…"}")
-                                        Text(
-                                            info?.tracks
-                                                ?: info?.tracksError
-                                                ?: "Analyse des pistes en cours…"
-                                        )
-                                    }
-                                },
-                                confirmButton = {
-                                    TextButton(onClick = { metadataDialogVisible = false }) {
-                                        Text("Fermer")
-                                    }
-                                }
-                            )
-                        }
-                    }
-                    1 -> {
-                        EditorScreen()
-                    }
-                    else -> {
-                        CameraScreen()
-                    }
-                }
                     }
                 }
             }
         }
+    }
+
+    // Test de l'étape 4 : navigation dans la médiathèque avec un MediaBrowser (voir Logcat, filtre "Library").
+    private fun logLibrary(browser: MediaBrowser) {
+        val executor = ContextCompat.getMainExecutor(this)
+        val rootFuture = browser.getLibraryRoot(null)
+        rootFuture.addListener({
+            val root = rootFuture.get().value ?: return@addListener
+            val categoriesFuture = browser.getChildren(root.mediaId, 0, 50, null)
+            categoriesFuture.addListener({
+                categoriesFuture.get().value?.forEach { category ->
+                    Log.d("Library", "Catégorie : ${category.mediaMetadata.title}")
+                    val mediaFuture = browser.getChildren(category.mediaId, 0, 50, null)
+                    mediaFuture.addListener({
+                        mediaFuture.get().value?.forEach {
+                            Log.d("Library", "   - ${it.mediaMetadata.title}")
+                        }
+                    }, executor)
+                }
+            }, executor)
+        }, executor)
     }
 
     @OptIn(UnstableApi::class)
@@ -1278,8 +1271,8 @@ class MainActivity : ComponentActivity() {
         manager.addListener(downloadManagerListener)
         DownloadService.start(this, OfflineDownloadService::class.java)
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
-        val future = MediaController.Builder(this, token)
-            .setListener(object : MediaController.Listener {
+        val future = MediaBrowser.Builder(this, token)
+            .setListener(object : MediaBrowser.Listener {
                 override fun onMediaButtonPreferencesChanged(
                     controller: MediaController,
                     mediaButtonPreferences: List<CommandButton>,
@@ -1312,6 +1305,8 @@ class MainActivity : ComponentActivity() {
                 return@addListener
             }
 
+            logLibrary(controller)
+
             if (controller.mediaItemCount == 0) {
                 // A receiver must be able to fetch every item in the transferred queue.
                 val items = tracks
@@ -1329,7 +1324,7 @@ class MainActivity : ComponentActivity() {
             playbackState = controller.playbackState
             isPlaying = controller.isPlaying
             audioOnly = C.TRACK_TYPE_VIDEO in
-                controller.trackSelectionParameters.disabledTrackTypes
+                    controller.trackSelectionParameters.disabledTrackTypes
             playbackError = controller.playerError?.let { error ->
                 error.localizedMessage ?: error.cause?.localizedMessage ?: error.errorCodeName
             }

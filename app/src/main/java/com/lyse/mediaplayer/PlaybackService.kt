@@ -1,5 +1,6 @@
 package com.lyse.mediaplayer
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.media3.datasource.DefaultDataSource
@@ -8,6 +9,8 @@ import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.annotation.OptIn
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -20,10 +23,11 @@ import androidx.media3.cast.CastPlayer
 import com.google.android.gms.cast.framework.CastContext
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSession.ConnectionResult
 import androidx.media3.session.MediaSession.ConnectionResult.AcceptedResultBuilder
-import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
@@ -36,6 +40,9 @@ private const val TAG = "PlayerEvents"
 
 const val ACTION_TOGGLE_FAVORITE = "com.lyse.mediaplayer.TOGGLE_FAVORITE"
 private const val MAX_FAVORITES = 2
+private const val PREFS = "playback_state"
+private const val KEY_LAST_ID = "last_media_id"
+private const val KEY_LAST_POSITION = "last_position_ms"
 
 private fun createPlaybackListener() = object : Player.Listener {
     override fun onPlaybackStateChanged(playbackState: Int) {
@@ -59,9 +66,9 @@ private fun createPlaybackListener() = object : Player.Listener {
 }
 
 @UnstableApi
-class PlaybackService : MediaSessionService() {
+class PlaybackService : MediaLibraryService() {
 
-    private var mediaSession: MediaSession? = null
+    private var mediaSession: MediaLibrarySession? = null
     private var mediaCache: SimpleCache? = null
     private var castPlayer: CastPlayer? = null
     private val playbackListener = createPlaybackListener()
@@ -91,7 +98,16 @@ class PlaybackService : MediaSessionService() {
         )
     }
 
-    private inner class SessionCallback : MediaSession.Callback {
+
+    private fun savePlaybackState(player: Player) {
+        val item = player.currentMediaItem ?: return
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putString(KEY_LAST_ID, item.mediaId)
+            .putLong(KEY_LAST_POSITION, player.currentPosition)
+            .apply()
+    }
+
+    private inner class SessionCallback : MediaLibrarySession.Callback {
 
         @OptIn(UnstableApi::class)
         override fun onConnectAsync(
@@ -105,6 +121,69 @@ class PlaybackService : MediaSessionService() {
                 AcceptedResultBuilder(session, controller)
                     .setAvailableSessionCommands(sessionCommands)
                     .build()
+            )
+        }
+
+        // ---- Navigation dans la médiathèque (MediaBrowser, Android Auto, Assistant...) ----
+
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<MediaItem>> =
+            Futures.immediateFuture(LibraryResult.ofItem(MediaCatalog.rootItem(), params))
+
+        override fun onGetChildren(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+            val children = MediaCatalog.children(this@PlaybackService, parentId)
+                ?: return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
+            val pageItems = children.drop(page * pageSize).take(pageSize)
+            return Futures.immediateFuture(
+                LibraryResult.ofItemList(ImmutableList.copyOf(pageItems), params)
+            )
+        }
+
+        override fun onGetItem(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            mediaId: String,
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            val item = MediaCatalog.find(this@PlaybackService, mediaId)
+                ?: return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
+            return Futures.immediateFuture(LibraryResult.ofItem(item, null))
+        }
+
+        // Un contrôleur externe envoie souvent des MediaItem avec seulement un mediaId :
+        // on les complète (uri, mimeType, métadonnées) depuis le catalogue.
+        override fun onAddMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: MutableList<MediaItem>,
+        ): ListenableFuture<MutableList<MediaItem>> {
+            val resolved = mediaItems.map { MediaCatalog.find(this@PlaybackService, it.mediaId) ?: it }
+            return Futures.immediateFuture(resolved.toMutableList())
+        }
+
+        // Bouton "play" d'un casque Bluetooth / de la notification alors que l'app est morte :
+        // on redonne au lecteur la dernière file et la dernière position.
+        override fun onPlaybackResumption(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            isForPlayback: Boolean,
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            val items = MediaCatalog.tracks(this@PlaybackService).map(MediaCatalog::mediaItem)
+            val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+            val lastId = prefs.getString(KEY_LAST_ID, null)
+            val index = items.indexOfFirst { it.mediaId == lastId }.coerceAtLeast(0)
+            val position = if (lastId != null) prefs.getLong(KEY_LAST_POSITION, 0L) else 0L
+            return Futures.immediateFuture(
+                MediaSession.MediaItemsWithStartPosition(items, index, position)
             )
         }
 
@@ -161,6 +240,14 @@ class PlaybackService : MediaSessionService() {
             cacheDataSourceFactory
         )
         val player = ExoPlayer.Builder(this)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true
+            )
+            .setHandleAudioBecomingNoisy(true)
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(this).setDataSourceFactory(playbackDataSourceFactory)
             )
@@ -183,19 +270,36 @@ class PlaybackService : MediaSessionService() {
                 addListener(object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         updateButtons()
+                        savePlaybackState(this@apply)
+                    }
+
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        if (!isPlaying) savePlaybackState(this@apply)
                     }
                 })
             }
 
         castPlayer = CastPlayer.Builder(this).setLocalPlayer(player).build()
-        mediaSession = MediaSession.Builder(this, castPlayer!!)
-            .setCallback(SessionCallback())
+        mediaSession = MediaLibrarySession.Builder(this, castPlayer!!, SessionCallback())
             .setMediaButtonPreferences(ImmutableList.of(favoriteButton(false), skipForward))
             .build()
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
         mediaSession
+
+    // L'utilisateur a retiré l'app des applications récentes :
+    // si rien ne joue, on arrête le service ; sinon la musique continue.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val player = mediaSession?.player
+        if (player != null) savePlaybackState(player)
+        if (player == null || !player.playWhenReady || player.mediaItemCount == 0 ||
+            player.playbackState == Player.STATE_ENDED
+        ) {
+            stopSelf()
+        }
+        // Variante : toujours arrêter la lecture -> pauseAllPlayersAndStopSelf()
+    }
 
     override fun onDestroy() {
         mediaSession?.run {
