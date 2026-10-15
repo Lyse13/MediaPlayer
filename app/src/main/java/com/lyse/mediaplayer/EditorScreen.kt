@@ -66,7 +66,19 @@ import androidx.media3.inspector.MetadataRetriever
 import androidx.media3.inspector.frame.FrameExtractor
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.TrackGroupArray
+import android.graphics.Color as AndroidColor
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.AbsoluteSizeSpan
+import android.text.style.ForegroundColorSpan
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.effect.StaticOverlaySettings
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.effect.Crop
+import androidx.media3.effect.OverlayEffect
+import androidx.media3.effect.TextOverlay
+import com.google.common.collect.ImmutableList
 import androidx.media3.effect.ScaleAndRotateTransformation
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.compose.PlayerSurface
@@ -83,6 +95,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.core.content.ContextCompat
+import androidx.media3.effect.TextureOverlay
 import com.google.common.util.concurrent.FutureCallback
 import com.google.common.util.concurrent.Futures
 import java.util.concurrent.Executors
@@ -104,6 +117,8 @@ fun EditorScreen() {
     var range by remember { mutableStateOf(0f..1f) }
     var rotate by remember { mutableStateOf(false) }
     var crop by remember { mutableStateOf(false) }
+    var watermark by remember { mutableStateOf(false) }
+    var quietAudio by remember { mutableStateOf(false) }
     var activeTransformer by remember { mutableStateOf<Transformer?>(null) }
     var exportInProgress by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableIntStateOf(0) }
@@ -298,9 +313,53 @@ fun EditorScreen() {
         context.startActivity(Intent.createChooser(sendIntent, "Partager la vidéo"))
     }
 
+    // Filigrane : un texte posé en bas à droite de la vidéo (aperçu ET export).
+    fun createWatermarkEffect(): Effect {
+        val text = SpannableString("© Lyse · MediaPlayer").apply {
+            setSpan(ForegroundColorSpan(AndroidColor.WHITE), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(AbsoluteSizeSpan(48), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+
+        // Correction : Utilisation de StaticOverlaySettings.Builder()
+        val settings = StaticOverlaySettings.Builder()
+            .setBackgroundFrameAnchor(0.95f, -0.9f) // bas à droite de la vidéo
+            .setOverlayFrameAnchor(1f, -1f) // coin bas droit du texte
+            .build()
+
+        val overlay: TextureOverlay = TextOverlay.createStaticTextOverlay(text, settings)
+        return OverlayEffect(ImmutableList.of(overlay))
+    }
+
+    // Les overlays viennent en dernier : le texte n'est ni tourné ni recadré.
+    fun buildVideoEffects(
+        rotationEnabled: Boolean,
+        cropEnabled: Boolean,
+        watermarkEnabled: Boolean,
+    ): List<Effect> = buildList {
+        if (rotationEnabled) {
+            add(ScaleAndRotateTransformation.Builder().setRotationDegrees(90f).build())
+        }
+        if (cropEnabled) add(Crop(-0.5f, 0.5f, -0.5f, 0.5f)) // keeps the center half
+        if (watermarkEnabled) add(createWatermarkEffect())
+    }
+
+    // Effet audio (export seulement) : on baisse le volume avec une matrice de mixage des canaux.
+    fun buildAudioProcessors(quietEnabled: Boolean): List<AudioProcessor> {
+        if (!quietEnabled) return emptyList()
+        val mixer = ChannelMixingAudioProcessor()
+        for (channels in 1..2) {
+            val coefficients = FloatArray(channels * channels) { index ->
+                if (index / channels == index % channels) 0.4f else 0f // diagonale = gain 0,4
+            }
+            mixer.putChannelMixingMatrix(ChannelMixingMatrix(channels, channels, coefficients))
+        }
+        return listOf(mixer)
+    }
+
     fun applyEdits(
         rotationEnabled: Boolean = rotate,
         cropEnabled: Boolean = crop,
+        watermarkEnabled: Boolean = watermark,
     ) {
         val uri = videoUri ?: return
         val startMs = (range.start * durationMs).toLong()
@@ -316,12 +375,7 @@ fun EditorScreen() {
             .setClippingConfiguration(clipping)
             .build()
 
-        val effects = buildList<Effect> {
-            if (rotationEnabled) {
-                add(ScaleAndRotateTransformation.Builder().setRotationDegrees(90f).build())
-            }
-            if (cropEnabled) add(Crop(-0.5f, 0.5f, -0.5f, 0.5f)) // keeps the center half
-        }
+        val effects = buildVideoEffects(rotationEnabled, cropEnabled, watermarkEnabled)
         player.setVideoEffects(effects)
         player.setMediaItem(item)
         player.prepare()
@@ -354,14 +408,9 @@ fun EditorScreen() {
                     .build()
             )
             .build()
-        val videoEffects = buildList<Effect> {
-            if (rotate) {
-                add(ScaleAndRotateTransformation.Builder().setRotationDegrees(90f).build())
-            }
-            if (crop) add(Crop(-0.5f, 0.5f, -0.5f, 0.5f))
-        }
+        val videoEffects = buildVideoEffects(rotate, crop, watermark)
         val editedMediaItem = EditedMediaItem.Builder(mediaItem)
-            .setEffects(Effects(emptyList(), videoEffects))
+            .setEffects(Effects(buildAudioProcessors(quietAudio), videoEffects))
             .build()
 
         lateinit var createdTransformer: Transformer
@@ -455,7 +504,7 @@ fun EditorScreen() {
             }
             val trackGroups = checkedTrackGroups
             val hasVideoTrack = trackGroups != null &&
-                (0 until trackGroups.length).any { trackGroups.get(it).type == C.TRACK_TYPE_VIDEO }
+                    (0 until trackGroups.length).any { trackGroups.get(it).type == C.TRACK_TYPE_VIDEO }
             if (!hasVideoTrack) {
                 exportMessage = "Export impossible : aucune piste vidéo n’a été détectée dans ce fichier."
                 return
@@ -519,6 +568,8 @@ fun EditorScreen() {
             range = 0f..1f
             rotate = false
             crop = false
+            watermark = false
+            quietAudio = false
             player.setVideoEffects(emptyList())
             player.setMediaItem(MediaItem.fromUri(uri))
             player.prepare()
@@ -682,6 +733,33 @@ fun EditorScreen() {
                                 crop = it
                                 applyEdits(cropEnabled = it)
                             }
+                        )
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Filigrane texte")
+                        Switch(
+                            checked = watermark,
+                            enabled = !exportInProgress && !saveInProgress,
+                            onCheckedChange = {
+                                watermark = it
+                                applyEdits(watermarkEnabled = it)
+                            }
+                        )
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Volume réduit (à l’export)")
+                        Switch(
+                            checked = quietAudio,
+                            enabled = !exportInProgress && !saveInProgress,
+                            onCheckedChange = { quietAudio = it }
                         )
                     }
 
